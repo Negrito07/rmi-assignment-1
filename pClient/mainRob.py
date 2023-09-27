@@ -47,7 +47,8 @@ class MyRob(CRobLinkAngs):
                     state='wait'
                 if self.measures.ground==0:
                     self.setVisitingLed(True);
-                self.wander()
+                #self.wander()
+                self.drive()
             elif state=='wait':
                 self.setReturningLed(True)
                 if self.measures.visitingLed==True:
@@ -60,8 +61,11 @@ class MyRob(CRobLinkAngs):
                     self.setVisitingLed(False)
                 if self.measures.returningLed==True:
                     self.setReturningLed(False)
-                self.wander()
+                #self.wander()
+                self.drive()
             
+    def drive(self):
+        print('Go')
 
     def wander(self):
         center_id = 0
