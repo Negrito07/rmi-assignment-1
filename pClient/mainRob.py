@@ -7,6 +7,42 @@ import xml.etree.ElementTree as ET
 CELLROWS=7
 CELLCOLS=14
 
+# Line Sensor Reads
+LEFT_CENTER = ['0', '1']
+LEFT_LEFT = ['1', '1']
+
+CENTER_LEFT = ['1', '1', '0']
+CENTER_CENTER = ['1', '1', '1']
+CENTER_RIGHT = ['0', '1', '1']
+
+RIGHT_CENTER = ['1', '0']
+RIGHT_RIGHT = ['1', '1']
+
+class LineSensorFilter():
+    def __init__(self, size, first):
+      # size of the buffer
+      self.size = size
+      # circular buffer (init copies the first value to all buffer entries)
+      self.buffer = [first for i in range(size)]
+      # reference to the oldest buffer position
+      self.last = 0
+
+    """ Updates the buffer with a lineSensorRead. """
+    def update(self, lineSensorRead):
+        self.buffer[self.last] = lineSensorRead
+        self.last = (self.last+1) % self.size
+
+    """ Returns a filtered lineSensorRead as the average of the last 'size' updates."""
+    def read(self):
+        filtered = []
+        for sensor in range(7):
+            total = ""
+            for read in self.buffer:
+                total += read[sensor] 
+            filtered.append(str(total.count('1') // ((self.size // 2) + 1)))
+        #print(self.buffer, "buffer", sep=" <-> ")
+        return filtered
+
 class MyRob(CRobLinkAngs):
     def __init__(self, rob_name, rob_id, angles, host):
         CRobLinkAngs.__init__(self, rob_name, rob_id, angles, host)
@@ -27,6 +63,10 @@ class MyRob(CRobLinkAngs):
 
         state = 'stop'
         stopped_state = 'run'
+
+        # Initialize line sensor filter
+        self.readSensors()  # with the first line sensor read
+        self.lineSensorFilter = LineSensorFilter(3, self.measures.lineSensor)
 
         while True:
             self.readSensors()
@@ -65,7 +105,16 @@ class MyRob(CRobLinkAngs):
                 self.drive()
             
     def drive(self):
-        print('Go')
+        # Get the line sensor read
+        lineSensorRead = self.measures.lineSensor
+        # Update the line sensor filter
+        self.lineSensorFilter.update(lineSensorRead)
+        lineSensorFilteredRead = self.lineSensorFilter.read()
+        
+        # DEBUG
+        print(lineSensorRead, ' <=> ', lineSensorFilteredRead)
+
+        self.driveMotors(0.1,0.1)
 
     def wander(self):
         center_id = 0
