@@ -11,12 +11,15 @@ CELLCOLS=14
 LEFT_CENTER = ['0', '1']
 LEFT_LEFT = ['1', '1']
 
-CENTER_LEFT = ['1', '1', '0']
+CENTER_LEFT = [['1', '1', '0'], ['1', '0', '0']]
 CENTER_CENTER = ['1', '1', '1']
-CENTER_RIGHT = ['0', '1', '1']
+CENTER_RIGHT = [['0', '1', '1'], ['0', '0', '1']]
 
 RIGHT_CENTER = ['1', '0']
 RIGHT_RIGHT = ['1', '1']
+
+EMPTY_SIDE = ['0', '0']
+EMPTY_CENTER = ['0', '0', '0']
 
 class LineSensorFilter():
     def __init__(self, size, first):
@@ -110,11 +113,72 @@ class MyRob(CRobLinkAngs):
         # Update the line sensor filter
         self.lineSensorFilter.update(lineSensorRead)
         lineSensorFilteredRead = self.lineSensorFilter.read()
+        # Control
+        left = lineSensorFilteredRead[:2]
+        center = lineSensorFilteredRead[2:5]
+        right = lineSensorFilteredRead[5:]
+
+        if center == CENTER_CENTER:
+            if right == EMPTY_SIDE and left == EMPTY_SIDE:  # CENTRALIZADO
+                motors = (0.1, 0.1)
+            elif right == RIGHT_RIGHT:                      # 90º DIREITA
+                motors = (0.1, -0.1)
+            elif left == LEFT_LEFT:                         # 90º ESQUERDA
+                motors = (-0.1, 0.1)
+            else:                                           # CHOQUE
+                motors = (0.0, 0.0) 
+        elif center in CENTER_RIGHT:
+            if center.count('1') == 2:
+                if right == RIGHT_RIGHT:                        # 90º DIREITA
+                    motors = (0.1, -0.05)
+                elif right == RIGHT_CENTER:                     # 45º DIREITA
+                    motors = (0.05, 0.0)
+                elif right == EMPTY_SIDE:
+                    motors = (0.09, 0.08)
+                else:                                           # CHOQUE
+                    motors = (0.0, 0.0)
+            else:
+                if right == RIGHT_RIGHT:                        # 45º DIREITA
+                    motors = (0.1, 0.0)
+                elif right == RIGHT_CENTER:                     # 45º DIREITA
+                    motors = (0.05, 0.0)
+                elif right == EMPTY_SIDE:
+                    motors = (0.09, 0.08)
+                else:                                           # CHOQUE
+                    motors = (0.0, 0.0)
+        elif center in CENTER_LEFT:
+            if center.count('1') == 2:
+                if left == LEFT_LEFT:                        # 90º DIREITA
+                    motors = (-0.05, 0.1)
+                elif left == LEFT_CENTER:                     # 45º DIREITA
+                    motors = (0.0, 0.05)
+                elif left == EMPTY_SIDE:
+                    motors = (0.08, 0.09)
+                else:                                           # CHOQUE
+                    motors = (0.0, 0.0)
+            else:
+                if left == LEFT_LEFT:                        # 45º DIREITA
+                    motors = (0.0, 0.1)
+                elif left == LEFT_CENTER:                     # 45º DIREITA
+                    motors = (0.0, 0.05)
+                elif left == EMPTY_SIDE:
+                    motors = (0.08, 0.09)
+                else:                                           # CHOQUE
+                    motors = (0.0, 0.0) 
+        elif center == EMPTY_CENTER:                        # FAZENDO A CURVA
+            if right == RIGHT_RIGHT:
+                motors = (0.05, 0.0)
+            elif left == LEFT_LEFT:
+                motors = (0.0, 0.05)
+            else:                                           # CHOQUE
+                motors = (0.0, 0.0)
+        else:                                               # CHOQUE
+            motors = (0.0, 0.0)
         
         # DEBUG
-        print(lineSensorRead, ' <=> ', lineSensorFilteredRead)
+        print(lineSensorRead, ' <=> ', lineSensorFilteredRead, ' ', (motors[0], motors[1]))
 
-        self.driveMotors(0.1,0.1)
+        self.driveMotors(motors[0], motors[1])
 
     def wander(self):
         center_id = 0
