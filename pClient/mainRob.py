@@ -85,7 +85,7 @@ class MyRob(CRobLinkAngs):
         self.d = 0
 
         
-        
+        self.count = 0
 
 
         while True:
@@ -129,6 +129,7 @@ class MyRob(CRobLinkAngs):
         return round(pidValue,2)
   
     def drive(self):
+        self.count = self.count+1
         # Get the line sensor read
         lineSensorRead = self.measures.lineSensor
         # Send it to the filter
@@ -162,7 +163,8 @@ class MyRob(CRobLinkAngs):
         #print(lineSensorRead, '<=>', lineSensorFilteredRead,'p:', self.p,'i:', self.i, 'd:', self.d, 'PID:', pid, 'motors:', lpow, rpow)
         
         # log
-        #print(self.p, self.i, self.d, pid, lpow, rpow)
+        # ti, error, p, i, d, pid, lpow, rpow    
+        print(self.count, self.error, self.p, self.i, self.d, lpow, rpow, sep=',')
 
     def wander(self):
         center_id = 0
