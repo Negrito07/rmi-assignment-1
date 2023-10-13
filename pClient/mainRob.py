@@ -3,32 +3,20 @@ import sys
 from croblink import *
 from math import *
 import xml.etree.ElementTree as ET
+# monitoring
+import csv
 
 CELLROWS=7
 CELLCOLS=14
 
-# Line Sensor Reads
-LEFT_CENTER = ['0', '1']
-LEFT_LEFT = ['1', '1']
+# debug
+class bcolors:
+    RED = '\033[31m'
+    GREEN = '\033[32m'
+    ENDC = '\033[0m'
 
-CENTER_LEFT = [['1', '1', '0'], ['1', '0', '0']]
-CENTER_CENTER = ['1', '1', '1']
-CENTER_RIGHT = [['0', '1', '1'], ['0', '0', '1']]
-
-RIGHT_CENTER = ['1', '0']
-RIGHT_RIGHT = ['1', '1']
-
-EMPTY_SIDE = ['0', '0']
-EMPTY_CENTER = ['0', '0', '0']
-
-# PID
-
-KP = 0.09
-KI = 0
-KD = 0.09
-
-
-
+# Filter
+FILTER_SIZE = 3
 class LineSensorFilter():
     def __init__(self, size, first):
       # size of the buffer
@@ -37,6 +25,7 @@ class LineSensorFilter():
       self.buffer = [first for i in range(size)]
       # reference to the oldest buffer position
       self.last = 0
+    
 
     """ Updates the buffer with a lineSensorRead. """
     def update(self, lineSensorRead):
@@ -53,10 +42,45 @@ class LineSensorFilter():
             filtered.append(str(total.count('1') // ((self.size // 2) + 1)))
         #print(self.buffer, "buffer", sep=" <-> ")
         return filtered
+    
+# PID
+KP = 0.008
+KI = 0
+KD = 0.01
+class PIDController:
+    def __init__(self, kp, ki, kd):
+        self.kp = kp
+        self.ki = ki
+        self.kd = kd
 
+        self.p = 0
+        self.i = 0
+        self.d = 0
+        self.pid = 0
+
+        self.lastError = 0
+
+    def getPID(self, error):
+        self.p = self.kp * (error)
+        self.i = self.ki * (self.i + error)
+        self.d = self.kd * (error - self.lastError)
+
+        self.lastError = error
+
+        self.pid = self.p + self.i + self.d
+        return self.pid
+
+# Rob
+BASE_SPEED = 0.07
+MAX_SPEED = 0.15
+MIN_SPEED = -0.15
+OUTSIDE_LINE = -1 
 class MyRob(CRobLinkAngs):
-    def __init__(self, rob_name, rob_id, angles, host):
+    def __init__(self, rob_name, rob_id, angles, host, base_speed=BASE_SPEED, max_speed=MAX_SPEED, min_speed=MIN_SPEED):
         CRobLinkAngs.__init__(self, rob_name, rob_id, angles, host)
+        self.baseSpeed = base_speed
+        self.maxSpeed = max_speed
+        self.minSpeed = min_speed
 
     # In this map the center of cell (i,j), (i in 0..6, j in 0..13) is mapped to labMap[i*2][j*2].
     # to know if there is a wall on top of cell(i,j) (i in 0..5), check if the value of labMap[i*2+1][j*2] is space or not
@@ -75,18 +99,14 @@ class MyRob(CRobLinkAngs):
         state = 'stop'
         stopped_state = 'run'
 
-        # Initialize line sensor filter
-        self.readSensors()  # with the first line sensor read
-        self.lineSensorFilter = LineSensorFilter(3, self.measures.lineSensor)        
-        self.last_error = 0
-        self.error = 0
-        self.p = 0
-        self.i = 0
-        self.d = 0
-
-        
-        self.count = 0
-
+        # make initial sensor read
+        self.readSensors()
+        # init line sensor filter
+        self.lineSensorFilter = LineSensorFilter(FILTER_SIZE, self.measures.lineSensor)
+        # init PID controller      
+        self.controller = PIDController(KP, KI, KD)
+        # init time instant count
+        self.ti = 0
 
         while True:
             self.readSensors()
@@ -124,47 +144,74 @@ class MyRob(CRobLinkAngs):
                 #self.wander()
                 self.drive()
     
-    def getPID(self):
-        pidValue = (KP*self.p) + (KI*self.i) + (KD*self.d)
-        return round(pidValue,2)
-  
+    def monitor(self):
+        data = {
+            "ti": self.ti,
+            "error": self.error,
+            "p": self.controller.p,
+            "i": self.controller.i,
+            "d": self.controller.d,
+            "pid": self.controller.pid,
+            "lPow": self.lPow,
+            "rPow": self.rPow
+        }
+        print(data)
+
+    def debug(self):
+        coloredLineSensor = ''.join(map(
+            lambda val: bcolors.RED+str(val)+bcolors.ENDC if val == '0' else bcolors.GREEN+str(val)+bcolors.ENDC, self.lineSensorRead)
+        )
+        coloredLineSensorFiltered = ''.join(map(
+            lambda val: bcolors.RED+str(val)+bcolors.ENDC if val == '0' else bcolors.GREEN+str(val)+bcolors.ENDC, self.lineSensorFilteredRead)
+        )
+
+        print(
+            '{} <=> {} error: {:5d} p: {:6.2f} i: {:6.2f} d: {:6.2f} PID: {:6.2f} motors: {:7.2f} {:7.2f}'
+                .format(
+                    coloredLineSensor, coloredLineSensorFiltered,
+                    self.error, self.controller.p, self.controller.i, self.controller.d, self.controller.pid,
+                    self.lPow, self.rPow
+                )
+        )
+
+    def determinePosition(self, lineSensor):
+        ones = lineSensor.count('1')
+        
+        if ones:    # inside the line
+            self.pos = sum(map(
+                lambda tup: int(tup[1]) * 10 * tup[0], enumerate(lineSensor)
+            )) // ones
+        else:       # outside the line
+            self.pos = -1
+
+    def computeError(self):
+        pass
+        
     def drive(self):
-        self.count = self.count+1
+        # Increment the time instant
+        self.ti = self.ti+1
         # Get the line sensor read
-        lineSensorRead = self.measures.lineSensor
+        self.lineSensorRead = self.measures.lineSensor
         # Send it to the filter
-        self.lineSensorFilter.update(lineSensorRead)
+        self.lineSensorFilter.update(self.lineSensorRead)
         # Get the filtered line sensor read
-        lineSensorFilteredRead = self.lineSensorFilter.read()
-        # Extract the sensor values
-        l2, l1, l0, c, r0, r1, r2 = list(map(int,lineSensorFilteredRead))
-        # Compute the error
-        # 00 - Lerr: 0 | Rerr: 0
-        # 01 - Lerr: 1 | Rerr: 3
-        # 10 - Lerr: 3 | Rerr: 1
-        # 11 - Lerr: 2 | Rerr: 2
-        leftError =  l1 + l2 + (l2 and not l1)
-        rightError = r1 + r2 + (r2 and not r1)
-        self.error = leftError - rightError
+        self.lineSensorFilteredRead = self.lineSensorFilter.read()
+        # test new position calc
+        self.determinePosition(self.lineSensorFilteredRead)
+        self.error = 30 - self.pos
         # Get the PID control
-        self.p = self.error
-        self.i = self.i + self.error
-        self.d = self.error - self.last_error
-        pid = self.getPID()
+        pid = self.controller.getPID(self.error)
         # Compute the powers of the motors
-        lpow = round(0.1 - pid, 2)
-        rpow = round(0.1 + pid, 2)
+        self.lPow = round(self.baseSpeed - pid, 2)
+        self.rPow = round(self.baseSpeed + pid, 2)
         # Send the drive command
-        self.driveMotors(lpow, rpow)
-        # Keep the last error
-        self.last_error = self.error
+        self.driveMotors(self.lPow, self.rPow)
 
         # debug
-        #print(lineSensorRead, '<=>', lineSensorFilteredRead,'p:', self.p,'i:', self.i, 'd:', self.d, 'PID:', pid, 'motors:', lpow, rpow)
+        self.debug()
         
         # log
-        # ti, error, p, i, d, pid, lpow, rpow    
-        print(self.count, self.error, self.p, self.i, self.d, lpow, rpow, sep=',')
+        # self.monitor()
 
     def wander(self):
         center_id = 0
