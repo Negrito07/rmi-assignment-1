@@ -44,8 +44,8 @@ class LineSensorFilter():
         return filtered
     
 # PID
-KP = 0.008
-KI = 0
+KP = 0.009
+KI = 0.0
 KD = 0.01
 class PIDController:
     def __init__(self, kp, ki, kd):
@@ -71,7 +71,7 @@ class PIDController:
         return self.pid
 
 # Rob
-BASE_SPEED = 0.07
+BASE_SPEED = 0.1
 MAX_SPEED = 0.15
 MIN_SPEED = -0.15
 OUTSIDE_LINE = -1 
@@ -162,11 +162,11 @@ class MyRob(CRobLinkAngs):
             lambda val: bcolors.RED+str(val)+bcolors.ENDC if val == '0' else bcolors.GREEN+str(val)+bcolors.ENDC, self.lineSensorRead)
         )
         coloredLineSensorFiltered = ''.join(map(
-            lambda val: bcolors.RED+str(val)+bcolors.ENDC if val == '0' else bcolors.GREEN+str(val)+bcolors.ENDC, self.lineSensorFilteredRead)
+            lambda val: bcolors.RED+str(val)+bcolors.ENDC if val == 0 else bcolors.GREEN+str(val)+bcolors.ENDC, self.lineSensorFilteredRead)
         )
 
         print(
-            '{} <=> {} error: {:5d} p: {:6.2f} i: {:6.2f} d: {:6.2f} PID: {:6.2f} motors: {:7.2f} {:7.2f}'
+            '{} <=> {} error: {:5.2f} p: {:6.2f} i: {:6.2f} d: {:6.2f} PID: {:6.2f} motors: {:7.2f} {:7.2f}'
                 .format(
                     coloredLineSensor, coloredLineSensorFiltered,
                     self.error, self.controller.p, self.controller.i, self.controller.d, self.controller.pid,
@@ -174,18 +174,13 @@ class MyRob(CRobLinkAngs):
                 )
         )
 
-    def determinePosition(self, lineSensor):
-        ones = lineSensor.count('1')
-        
+    def determinePosition(self):
+        ones = self.lineSensorFilteredRead.count(1)
+        l2, l1, l0, c, r0, r1, r2 = self.lineSensorFilteredRead
         if ones:    # inside the line
-            self.pos = sum(map(
-                lambda tup: int(tup[1]) * 10 * tup[0], enumerate(lineSensor)
-            )) // ones
+            self.pos = ((l2*0) + (l1*15) + (l0*25) + (c*30) + (r0*35) + (r1*45) + (r2*60)) / ones
         else:       # outside the line
             self.pos = -1
-
-    def computeError(self):
-        pass
         
     def drive(self):
         # Increment the time instant
@@ -195,9 +190,9 @@ class MyRob(CRobLinkAngs):
         # Send it to the filter
         self.lineSensorFilter.update(self.lineSensorRead)
         # Get the filtered line sensor read
-        self.lineSensorFilteredRead = self.lineSensorFilter.read()
+        self.lineSensorFilteredRead = list(map(int, self.lineSensorFilter.read()))
         # test new position calc
-        self.determinePosition(self.lineSensorFilteredRead)
+        self.determinePosition()
         self.error = 30 - self.pos
         # Get the PID control
         pid = self.controller.getPID(self.error)
