@@ -44,7 +44,7 @@ class LineSensorFilter():
         return filtered
     
 # PID
-KP = 0.009
+KP = 0.0085
 KI = 0.0
 KD = 0.01
 class PIDController:
@@ -71,7 +71,7 @@ class PIDController:
         return self.pid
 
 # Rob
-BASE_SPEED = 0.1
+BASE_SPEED = 0.08
 MAX_SPEED = 0.15
 MIN_SPEED = -0.15
 OUTSIDE_LINE = -1 
@@ -81,6 +81,7 @@ class MyRob(CRobLinkAngs):
         self.baseSpeed = base_speed
         self.maxSpeed = max_speed
         self.minSpeed = min_speed
+        self.outside = False
 
     # In this map the center of cell (i,j), (i in 0..6, j in 0..13) is mapped to labMap[i*2][j*2].
     # to know if there is a wall on top of cell(i,j) (i in 0..5), check if the value of labMap[i*2+1][j*2] is space or not
@@ -182,6 +183,21 @@ class MyRob(CRobLinkAngs):
         else:       # outside the line
             self.pos = -1
         
+    def calcError(self):
+        if self.pos == OUTSIDE_LINE:
+            if not self.outside:
+                self.outside = True
+                if self.controller.lastError < 0:
+                    self.error = 30
+                else:
+                    self.error = -30
+        else:
+            if self.outside:
+                self.outside = False
+            self.error = 30 - self.pos       
+
+
+
     def drive(self):
         # Increment the time instant
         self.ti = self.ti+1
@@ -193,7 +209,8 @@ class MyRob(CRobLinkAngs):
         self.lineSensorFilteredRead = list(map(int, self.lineSensorFilter.read()))
         # test new position calc
         self.determinePosition()
-        self.error = 30 - self.pos
+        self.calcError()
+
         # Get the PID control
         pid = self.controller.getPID(self.error)
         # Compute the powers of the motors
