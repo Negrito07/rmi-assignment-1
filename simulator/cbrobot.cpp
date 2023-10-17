@@ -1849,6 +1849,15 @@ void cbRobot::updateScoreLineControl2023()
                         if (nextPathInd >= nCellPath) nextPathInd=0;
                         scoreControl += 10;
                     }
+                    else if (fabs(controlCellPath[(nextPathInd+1) % nCellPath].x - controlCellPath[(nextPathInd-1+nCellPath) % nCellPath].x)
+                            + fabs(controlCellPath[(nextPathInd+1) % nCellPath].y - controlCellPath[(nextPathInd-1+nCellPath) % nCellPath].y) < 1.1) {
+                        //fprintf(stderr,"at corner\n");
+                        if (fabs(controlCellPath[(nextPathInd+1)%nCellPath].x - curPos.X()*2.0) < 1.0 && fabs(controlCellPath[(nextPathInd+1)%nCellPath].y-curPos.Y()*2.0) < 1.0) {
+                            nextPathInd+=2;
+                            if (nextPathInd >= nCellPath) nextPathInd=0;
+                            scoreControl += 10;
+                        }
+                    }
 
                     // check if robot is outside line
                     bool outside=true;
@@ -2293,6 +2302,13 @@ void cbRobot::Log(ostream &log, bool withActions)
        if(GPSDirOn) n += sprintf(xml+n, " Dir=\"%g\" ", GPSSensor->Degrees());
        n += sprintf(xml+n, "/>\n");
     }
+
+    //LineSensor
+    char lineSensorStr[NLINESENSORELEMENTS+1]="";
+    for(int i=0;i<NLINESENSORELEMENTS;i++){
+        strcat(lineSensorStr,lineSensor->Value()[i]?"1":"0");
+    }
+	n += sprintf(xml+n, "\t\t<LineSensor Value=\"%s\" />\n", lineSensorStr);
 
 	n += sprintf(xml+n, "\t</Sensors>\n");
 	/* add end led information */
