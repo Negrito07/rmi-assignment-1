@@ -70,11 +70,24 @@ class PIDController:
         self.pid = self.p + self.i + self.d
         return self.pid
 
+class GPSFilter:
+    def __init__(self,x,y):
+        self.init_x = x
+        self.init_y = y
+        self.x = self.init_x
+        self.y = self.init_y
+
+    def update(self,x,y):
+        self.x = round(x-self.init_x,1)
+        self.y = round(y - self.init_y,1)
+
+
 # Rob
-BASE_SPEED = 0.075
+BASE_SPEED = 0.03
 MAX_SPEED = 0.15
 MIN_SPEED = -0.15
 OUTSIDE_LINE = -1 
+
 class MyRob(CRobLinkAngs):
     def __init__(self, rob_name, rob_id, angles, host, base_speed=BASE_SPEED, max_speed=MAX_SPEED, min_speed=MIN_SPEED):
         CRobLinkAngs.__init__(self, rob_name, rob_id, angles, host)
@@ -82,6 +95,7 @@ class MyRob(CRobLinkAngs):
         self.maxSpeed = max_speed
         self.minSpeed = min_speed
         self.outside = False
+        self.state = "go"
 
     # In this map the center of cell (i,j), (i in 0..6, j in 0..13) is mapped to labMap[i*2][j*2].
     # to know if there is a wall on top of cell(i,j) (i in 0..5), check if the value of labMap[i*2+1][j*2] is space or not
@@ -108,6 +122,9 @@ class MyRob(CRobLinkAngs):
         self.controller = PIDController(KP, KI, KD)
         # init time instant count
         self.ti = 0
+        # init GPS
+
+        self.gpsFilter = GPSFilter(self.measures.x,self.measures.y)        
 
         while True:
             self.readSensors()
@@ -196,17 +213,33 @@ class MyRob(CRobLinkAngs):
                 self.outside = False
             self.error = 30 - self.pos       
 
-
+    def setState(self):
+        self.state = "go"
 
     def drive(self):
-        # Increment the time instant
-        self.ti = self.ti+1
         # Get the line sensor read
         self.lineSensorRead = self.measures.lineSensor
         # Send it to the filter
         self.lineSensorFilter.update(self.lineSensorRead)
         # Get the filtered line sensor read
         self.lineSensorFilteredRead = list(map(int, self.lineSensorFilter.read()))
+        # Update gps filter
+        self.gpsFilter.update(self.measures.x,self.measures.y)
+
+        print(self.gpsFilter.x,self.gpsFilter.y, self.measures.compass)
+        self.setState()
+
+        if self.state == "go":
+            self.go()
+        elif self.state == "ident":
+            self.ident()
+        elif self.state == "turn":
+            self.turn()
+
+    def go(self):
+        # Increment the time instant
+        self.ti = self.ti+1
+        
         # test new position calc
         self.determinePosition()
         self.calcError()
@@ -222,11 +255,9 @@ class MyRob(CRobLinkAngs):
         # debug
         #self.debug()
         
-        print(self.measures.x,self.measures.y, self.measures.compass)
         
-        # log
-        # self.monitor()
-
+        
+        
     def wander(self):
         center_id = 0
         left_id = 1
