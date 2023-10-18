@@ -94,7 +94,11 @@ class MyRob(CRobLinkAngs):
         self.maxSpeed = max_speed
         self.minSpeed = min_speed
         self.outside = False
-        self.state = "go"
+        self.state = "ident"
+        # IDENT
+        self.dirs = []
+        self.foundLeft = 0
+        self.foundRight = 0
 
     # In this map the center of cell (i,j), (i in 0..6, j in 0..13) is mapped to labMap[i*2][j*2].
     # to know if there is a wall on top of cell(i,j) (i in 0..5), check if the value of labMap[i*2+1][j*2] is space or not
@@ -213,11 +217,18 @@ class MyRob(CRobLinkAngs):
             self.error = 30 - self.pos       
 
     def setState(self):
-        #print(self.gpsFilter.x % 2,self.gpsFilter.y % 2)
-        if((abs(self.gpsFilter.x) % 2 <= 0.1 or abs(self.gpsFilter.x) % 2 >= 1.5) and ((abs(self.gpsFilter.y) % 2 <= 0.1) or abs(self.gpsFilter.y) % 2 >= 1.5)):
-            self.state = "ident"
-        else:
-            self.state = 'go'
+        print(self.gpsFilter.x % 2,self.gpsFilter.y % 2)
+
+        if self.state == "go":
+            if(abs(self.gpsFilter.x) % 2 >= 1.5) or (abs(self.gpsFilter.y) % 2 >= 1.5):
+                self.state = "ident"
+                self.dirs = []
+                self.foundLeft = 0
+                self.foundRight = 0
+        elif self.state == "ident":
+            if (abs(self.gpsFilter.x) % 2 > 0.1) or (abs(self.gpsFilter.y) % 2 > 0.1):
+                self.state = "go"
+
         
     def drive(self):
         # Get the line sensor read
@@ -261,8 +272,36 @@ class MyRob(CRobLinkAngs):
         self.debug()
         
     def ident(self):
-        self.driveMotors(0.03, 0.03)
         print("IDENT")
+        
+        left = self.lineSensorFilteredRead[:2]
+        right = self.lineSensorFilteredRead[5:]
+
+        if left != [0, 0]:
+            if not self.foundLeft:
+                if left == [0, 1]:
+                    self.dirs.append("NE")
+                elif left == [1, 0]:
+                    self.dirs.append("NO")
+                elif left == [1, 1]:
+                    self.dirs.append("N")
+                self.foundLeft = 1
+
+        if right != [0, 0]:
+            if not self.foundRight:
+                if right == [0, 1]:
+                    self.dirs.append("SO")
+                    self.foundLeft = 1
+                elif left == [1, 0]:
+                    self.dirs.append("SE")
+                elif left == [1, 1]:
+                    self.dirs.append("S")
+                self.foundRight = 1
+        
+        
+        self.driveMotors(0.03, 0.03)
+        
+        
         coloredLineSensor = ''.join(map(
             lambda val: bcolors.RED+str(val)+bcolors.ENDC if val == '0' else bcolors.GREEN+str(val)+bcolors.ENDC, self.lineSensorRead)
         )
@@ -270,6 +309,11 @@ class MyRob(CRobLinkAngs):
             lambda val: bcolors.RED+str(val)+bcolors.ENDC if val == 0 else bcolors.GREEN+str(val)+bcolors.ENDC, self.lineSensorFilteredRead)
         )
         print(coloredLineSensor, "<=>", coloredLineSensorFiltered)
+
+    def turn(self):
+        print("TURN")
+
+        self.driveMotors(0.0, 0.0)
         
         
     def wander(self):
