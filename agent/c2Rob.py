@@ -217,19 +217,22 @@ class MyRob(CRobLinkAngs):
             self.error = 30 - self.pos       
 
     def setState(self):
-        print(self.gpsFilter.x % 2,self.gpsFilter.y % 2)
+        print(abs(self.gpsFilter.x )% 2,abs(self.gpsFilter.y) % 2)
 
         if self.state == "go":
-            if(abs(self.gpsFilter.x) % 2 >= 1.5) or (abs(self.gpsFilter.y) % 2 >= 1.5):
+            if(((abs(self.gpsFilter.x) % 2 >= 1.5) and (abs(self.gpsFilter.y) % 2 == 0)) or ((abs(self.gpsFilter.x) % 2 == 0) and (abs(self.gpsFilter.y) % 2 >= 1.5))):
                 self.state = "ident"
                 self.dirs = []
                 self.foundLeft = 0
                 self.foundRight = 0
         elif self.state == "ident":
-            if (abs(self.gpsFilter.x) % 2 > 0.1) or (abs(self.gpsFilter.y) % 2 > 0.1):
+            if ( (0 < abs(self.gpsFilter.x) % 2 < 1.5 ) or (0 < abs(self.gpsFilter.y) % 2 <1.5)):
+                self.state = "turn"
+        elif self.state == "turn":
+            if ((abs(self.gpsFilter.x) % 2 > 0.5) or (abs(self.gpsFilter.y) % 2 > 0.5)):
                 self.state = "go"
-
         
+
     def drive(self):
         # Get the line sensor read
         self.lineSensorRead = self.measures.lineSensor
@@ -292,14 +295,14 @@ class MyRob(CRobLinkAngs):
                 if right == [0, 1]:
                     self.dirs.append("SO")
                     self.foundLeft = 1
-                elif left == [1, 0]:
+                elif right == [1, 0]:
                     self.dirs.append("SE")
-                elif left == [1, 1]:
+                elif right == [1, 1]:
                     self.dirs.append("S")
                 self.foundRight = 1
         
-        
-        self.driveMotors(0.03, 0.03)
+        print(self.dirs)
+        self.driveMotors(0.01, 0.01)
         
         
         coloredLineSensor = ''.join(map(
@@ -313,8 +316,20 @@ class MyRob(CRobLinkAngs):
     def turn(self):
         print("TURN")
 
-        self.driveMotors(0.0, 0.0)
-        
+        if self.dirs == ["N"]:
+            self.driveMotors(-0.05, 0.05)
+        elif self.dirs == ["NE"]:
+            self.driveMotors(0, 0.05)
+        elif self.dirs == ["NO"]:
+            self.driveMotors(-0.05, 0.05)
+        elif self.dirs == ["S"]:
+            self.driveMotors(0.05, -0.05)
+        elif self.dirs == ["SE"]:
+            self.driveMotors(0.05, 0)
+        elif self.dirs == ["SO"]:
+            self.driveMotors(0.05, -0.05)
+        else:  
+            self.driveMotors(0.03, 0.03)
         
     def wander(self):
         center_id = 0
