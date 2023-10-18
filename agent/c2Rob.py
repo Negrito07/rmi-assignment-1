@@ -44,9 +44,9 @@ class LineSensorFilter():
         return filtered
     
 # PID
-KP = 0.0085
+KP = 0.0025
 KI = 0.0
-KD = 0.01
+KD = 0.002
 class PIDController:
     def __init__(self, kp, ki, kd):
         self.kp = kp
@@ -82,6 +82,18 @@ class GPSFilter:
         self.x = round(x-self.init_x, 1)
         self.y = round(y - self.init_y, 1)
 
+# Orientation
+class dir:
+    N = 90
+    NE = 45
+    L = 0
+    SE = -45
+    S = -90
+    SO = -135
+    O = -180
+    NO = 135
+
+
 # Rob
 BASE_SPEED = 0.05
 MAX_SPEED = 0.15
@@ -94,9 +106,10 @@ class MyRob(CRobLinkAngs):
         self.maxSpeed = max_speed
         self.minSpeed = min_speed
         self.outside = False
+        self.orientation = dir.L
         self.state = "ident"
         # IDENT
-        self.dirs = ["L"]
+        self.dirs = []
         self.foundLeft = False
         self.foundRight = False
         self.LostCenter = False
@@ -206,13 +219,13 @@ class MyRob(CRobLinkAngs):
 
     def setState(self):
         if self.state == "go":
-            if (self.Dx >= 1.5 and self.Dy == 0) or (self.Dx == 0 and self.Dy >= 1.5):
+            if (self.Dx >= 1.3 and self.Dy == 0) or (self.Dx == 0 and self.Dy >= 1.3):
                 self.state = "ident"
                 self.dirs = []
                 self.foundLeft = 0
                 self.foundRight = 0
         elif self.state == "ident":
-            if (0 < self.Dx < 1.5 ) or (0 < self.Dy <1.5):
+            if (0 < self.Dx < 1.3 ) or (0 < self.Dy <1.3):
                 self.state = "go"
         #         self.state = "turn"
         # elif self.state == "turn":
@@ -268,6 +281,7 @@ class MyRob(CRobLinkAngs):
         right = self.lineSensorFilteredRead[5:]
         center = self.lineSensorFilteredRead[2:5]
 
+
         if left != [0, 0]:
             if not self.foundLeft:
                 if left == [0, 1]:
@@ -289,7 +303,7 @@ class MyRob(CRobLinkAngs):
                     self.dirs.append("S")
                 self.foundRight = True
 
-        # if center != [1, 1, 1]:
+        # if 1 in center:
         #     if not self.lostCenter:
         #         self.dirs.remove("?")
         #     self.lostCenter = True
@@ -298,8 +312,8 @@ class MyRob(CRobLinkAngs):
         #     pass
 
         # Compute the powers of the motors
-        self.lPow = 0.01
-        self.rPow = 0.01
+        self.lPow = 0.02
+        self.rPow = 0.02
         # Send the drive command
         self.driveMotors(self.lPow, self.rPow)
         
