@@ -70,6 +70,7 @@ class PIDController:
         self.pid = self.p + self.i + self.d
         return self.pid
 
+# Displacement
 class GPSFilter:
     def __init__(self,x,y):
         self.init_x = x
@@ -78,15 +79,14 @@ class GPSFilter:
         self.y = self.init_y
 
     def update(self,x,y):
-        self.x = round(x-self.init_x,1)
-        self.y = round(y - self.init_y,1)
+        self.x = round(x-self.init_x, 1)
+        self.y = round(y - self.init_y, 1)
 
 # Rob
 BASE_SPEED = 0.05
 MAX_SPEED = 0.15
 MIN_SPEED = -0.15
 OUTSIDE_LINE = -1 
-
 class MyRob(CRobLinkAngs):
     def __init__(self, rob_name, rob_id, angles, host, base_speed=BASE_SPEED, max_speed=MAX_SPEED, min_speed=MIN_SPEED):
         CRobLinkAngs.__init__(self, rob_name, rob_id, angles, host)
@@ -96,9 +96,10 @@ class MyRob(CRobLinkAngs):
         self.outside = False
         self.state = "ident"
         # IDENT
-        self.dirs = []
-        self.foundLeft = 0
-        self.foundRight = 0
+        self.dirs = ["L"]
+        self.foundLeft = False
+        self.foundRight = False
+        self.LostCenter = False
 
     # In this map the center of cell (i,j), (i in 0..6, j in 0..13) is mapped to labMap[i*2][j*2].
     # to know if there is a wall on top of cell(i,j) (i in 0..5), check if the value of labMap[i*2+1][j*2] is space or not
@@ -164,21 +165,8 @@ class MyRob(CRobLinkAngs):
                     self.setReturningLed(False)
                 #self.wander()
                 self.drive()
-    
-    def monitor(self):
-        data = {
-            "ti": self.ti,
-            "error": self.error,
-            "p": self.controller.p,
-            "i": self.controller.i,
-            "d": self.controller.d,
-            "pid": self.controller.pid,
-            "lPow": self.lPow,
-            "rPow": self.rPow
-        }
-        print(data)
 
-    def debug(self):
+    def debug_GO(self):
         coloredLineSensor = ''.join(map(
             lambda val: bcolors.RED+str(val)+bcolors.ENDC if val == '0' else bcolors.GREEN+str(val)+bcolors.ENDC, self.lineSensorRead)
         )
@@ -187,9 +175,9 @@ class MyRob(CRobLinkAngs):
         )
 
         print(
-            '{} <=> {} error: {:5.2f} p: {:6.2f} i: {:6.2f} d: {:6.2f} PID: {:6.2f} motors: {:7.2f} {:7.2f}'
+            '{} <=> {} {} delta: {:4.2f} {:4.2f} error: {:5.2f} p: {:6.2f} i: {:6.2f} d: {:6.2f} PID: {:6.2f} motors: {:5.2f} {:5.2f}'
                 .format(
-                    coloredLineSensor, coloredLineSensorFiltered,
+                    coloredLineSensor, coloredLineSensorFiltered, self.state.upper(), self.Dx, self.Dy,
                     self.error, self.controller.p, self.controller.i, self.controller.d, self.controller.pid,
                     self.lPow, self.rPow
                 )
@@ -217,20 +205,19 @@ class MyRob(CRobLinkAngs):
             self.error = 30 - self.pos       
 
     def setState(self):
-        print(abs(self.gpsFilter.x )% 2,abs(self.gpsFilter.y) % 2)
-
         if self.state == "go":
-            if(((abs(self.gpsFilter.x) % 2 >= 1.5) and (abs(self.gpsFilter.y) % 2 == 0)) or ((abs(self.gpsFilter.x) % 2 == 0) and (abs(self.gpsFilter.y) % 2 >= 1.5))):
+            if (self.Dx >= 1.5 and self.Dy == 0) or (self.Dx == 0 and self.Dy >= 1.5):
                 self.state = "ident"
                 self.dirs = []
                 self.foundLeft = 0
                 self.foundRight = 0
         elif self.state == "ident":
-            if ( (0 < abs(self.gpsFilter.x) % 2 < 1.5 ) or (0 < abs(self.gpsFilter.y) % 2 <1.5)):
-                self.state = "turn"
-        elif self.state == "turn":
-            if ((abs(self.gpsFilter.x) % 2 > 0.5) or (abs(self.gpsFilter.y) % 2 > 0.5)):
+            if (0 < self.Dx < 1.5 ) or (0 < self.Dy <1.5):
                 self.state = "go"
+        #         self.state = "turn"
+        # elif self.state == "turn":
+        #     if (self.Dx > 0.5) or (self.Dy > 0.5):
+        #         self.state = "go"
         
 
     def drive(self):
@@ -242,6 +229,9 @@ class MyRob(CRobLinkAngs):
         self.lineSensorFilteredRead = list(map(int, self.lineSensorFilter.read()))
         # Update gps filter
         self.gpsFilter.update(self.measures.x,self.measures.y)
+        # Calc displacement from the last intersection: (Dx, Dy)
+        self.Dx = round(abs(self.gpsFilter.x) % 2, 1)
+        self.Dy = round(abs(self.gpsFilter.y) % 2, 1)
 
         #print(self.gpsFilter.x,self.gpsFilter.y, self.measures.compass)
         
@@ -255,7 +245,6 @@ class MyRob(CRobLinkAngs):
             self.turn()
 
     def go(self):
-        print("GO")
         # Increment the time instant
         self.ti = self.ti+1
         
@@ -272,13 +261,12 @@ class MyRob(CRobLinkAngs):
         self.driveMotors(self.lPow, self.rPow)
 
         # debug
-        self.debug()
+        self.debug_GO()
         
     def ident(self):
-        print("IDENT")
-        
         left = self.lineSensorFilteredRead[:2]
         right = self.lineSensorFilteredRead[5:]
+        center = self.lineSensorFilteredRead[2:5]
 
         if left != [0, 0]:
             if not self.foundLeft:
@@ -288,7 +276,7 @@ class MyRob(CRobLinkAngs):
                     self.dirs.append("NO")
                 elif left == [1, 1]:
                     self.dirs.append("N")
-                self.foundLeft = 1
+                self.foundLeft = True
 
         if right != [0, 0]:
             if not self.foundRight:
@@ -299,37 +287,75 @@ class MyRob(CRobLinkAngs):
                     self.dirs.append("SE")
                 elif right == [1, 1]:
                     self.dirs.append("S")
-                self.foundRight = 1
+                self.foundRight = True
+
+        # if center != [1, 1, 1]:
+        #     if not self.lostCenter:
+        #         self.dirs.remove("?")
+        #     self.lostCenter = True
         
-        print(self.dirs)
-        self.driveMotors(0.01, 0.01)
+        # if self.Dx <= 0:
+        #     pass
+
+        # Compute the powers of the motors
+        self.lPow = 0.01
+        self.rPow = 0.01
+        # Send the drive command
+        self.driveMotors(self.lPow, self.rPow)
         
-        
+        # debug
         coloredLineSensor = ''.join(map(
             lambda val: bcolors.RED+str(val)+bcolors.ENDC if val == '0' else bcolors.GREEN+str(val)+bcolors.ENDC, self.lineSensorRead)
         )
         coloredLineSensorFiltered = ''.join(map(
             lambda val: bcolors.RED+str(val)+bcolors.ENDC if val == 0 else bcolors.GREEN+str(val)+bcolors.ENDC, self.lineSensorFilteredRead)
         )
-        print(coloredLineSensor, "<=>", coloredLineSensorFiltered)
+        
+        print(
+            '{} <=> {} {} delta: {:4.2f} {:4.2f} {} motors: {:5.2f} {:5.2f}'
+                .format(
+                    coloredLineSensor, coloredLineSensorFiltered, self.state.upper(), self.Dx, self.Dy,
+                    self.dirs,
+                    self.lPow, self.rPow
+                )
+        )
 
     def turn(self):
-        print("TURN")
 
+        # Compute the powers of the motors
         if self.dirs == ["N"]:
-            self.driveMotors(-0.05, 0.05)
+            self.lPow, self.rPow = (-0.05, 0.05)
         elif self.dirs == ["NE"]:
-            self.driveMotors(0, 0.05)
+            self.lPow, self.rPow = (0, 0.05)
         elif self.dirs == ["NO"]:
-            self.driveMotors(-0.05, 0.05)
+            self.lPow, self.rPow = (-0.05, 0.05)
         elif self.dirs == ["S"]:
-            self.driveMotors(0.05, -0.05)
+            self.lPow, self.rPow = (0.05, -0.05)
         elif self.dirs == ["SE"]:
-            self.driveMotors(0.05, 0)
+            self.lPow, self.rPow = (0.05, 0)
         elif self.dirs == ["SO"]:
-            self.driveMotors(0.05, -0.05)
+            self.lPow, self.rPow = (0.05, -0.05)
         else:  
-            self.driveMotors(0.03, 0.03)
+            self.lPow, self.rPow = (0.03, 0.03)
+
+        # Send the drive command
+        self.driveMotors(self.lPow, self.rPow)
+
+        # debug
+        coloredLineSensor = ''.join(map(
+            lambda val: bcolors.RED+str(val)+bcolors.ENDC if val == '0' else bcolors.GREEN+str(val)+bcolors.ENDC, self.lineSensorRead)
+        )
+        coloredLineSensorFiltered = ''.join(map(
+            lambda val: bcolors.RED+str(val)+bcolors.ENDC if val == 0 else bcolors.GREEN+str(val)+bcolors.ENDC, self.lineSensorFilteredRead)
+        )
+        
+        print(
+            '{} <=> {} {} delta: {:4.2f} {:4.2f} motors: {:5.2f} {:5.2f}'
+                .format(
+                    coloredLineSensor, coloredLineSensorFiltered, self.state.upper(), self.Dx, self.Dy,
+                    self.lPow, self.rPow
+                )
+        )
         
     def wander(self):
         center_id = 0
