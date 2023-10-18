@@ -81,9 +81,8 @@ class GPSFilter:
         self.x = round(x-self.init_x,1)
         self.y = round(y - self.init_y,1)
 
-
 # Rob
-BASE_SPEED = 0.03
+BASE_SPEED = 0.05
 MAX_SPEED = 0.15
 MIN_SPEED = -0.15
 OUTSIDE_LINE = -1 
@@ -214,8 +213,12 @@ class MyRob(CRobLinkAngs):
             self.error = 30 - self.pos       
 
     def setState(self):
-        self.state = "go"
-
+        #print(self.gpsFilter.x % 2,self.gpsFilter.y % 2)
+        if((abs(self.gpsFilter.x) % 2 <= 0.1 or abs(self.gpsFilter.x) % 2 >= 1.5) and ((abs(self.gpsFilter.y) % 2 <= 0.1) or abs(self.gpsFilter.y) % 2 >= 1.5)):
+            self.state = "ident"
+        else:
+            self.state = 'go'
+        
     def drive(self):
         # Get the line sensor read
         self.lineSensorRead = self.measures.lineSensor
@@ -226,7 +229,8 @@ class MyRob(CRobLinkAngs):
         # Update gps filter
         self.gpsFilter.update(self.measures.x,self.measures.y)
 
-        print(self.gpsFilter.x,self.gpsFilter.y, self.measures.compass)
+        #print(self.gpsFilter.x,self.gpsFilter.y, self.measures.compass)
+        
         self.setState()
 
         if self.state == "go":
@@ -237,6 +241,7 @@ class MyRob(CRobLinkAngs):
             self.turn()
 
     def go(self):
+        print("GO")
         # Increment the time instant
         self.ti = self.ti+1
         
@@ -253,9 +258,18 @@ class MyRob(CRobLinkAngs):
         self.driveMotors(self.lPow, self.rPow)
 
         # debug
-        #self.debug()
+        self.debug()
         
-        
+    def ident(self):
+        self.driveMotors(0.03, 0.03)
+        print("IDENT")
+        coloredLineSensor = ''.join(map(
+            lambda val: bcolors.RED+str(val)+bcolors.ENDC if val == '0' else bcolors.GREEN+str(val)+bcolors.ENDC, self.lineSensorRead)
+        )
+        coloredLineSensorFiltered = ''.join(map(
+            lambda val: bcolors.RED+str(val)+bcolors.ENDC if val == 0 else bcolors.GREEN+str(val)+bcolors.ENDC, self.lineSensorFilteredRead)
+        )
+        print(coloredLineSensor, "<=>", coloredLineSensorFiltered)
         
         
     def wander(self):
