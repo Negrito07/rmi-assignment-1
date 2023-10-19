@@ -15,6 +15,11 @@ class bcolors:
     GREEN = '\033[32m'
     ENDC = '\033[0m'
 
+    def color(lineSensorSeq):
+        return ''.join(map(
+            lambda val: bcolors.RED+val+bcolors.ENDC if val == '0' else bcolors.GREEN+val+bcolors.ENDC, lineSensorSeq)
+        )
+
 # Filter
 FILTER_SIZE = 3
 class LineSensorFilter():
@@ -44,9 +49,9 @@ class LineSensorFilter():
         return filtered
     
 # PID
-KP = 0.0025
+KP = 0.0020
 KI = 0.0
-KD = 0.002
+KD = 0.0015
 class PIDController:
     def __init__(self, kp, ki, kd):
         self.kp = kp
@@ -79,8 +84,8 @@ class GPSFilter:
         self.y = self.init_y
 
     def update(self,x,y):
-        self.x = round(x-self.init_x, 1)
-        self.y = round(y - self.init_y, 1)
+        self.x = round(x-self.init_x, 2)
+        self.y = round(y - self.init_y, 2)
 
 # Orientation
 class dir:
@@ -93,7 +98,136 @@ class dir:
     O = -180
     NO = 135
 
+class curv:
+    cl_135 = '0001111000'
+    cr_135 = '0010110100'
 
+    cl_45 = cr_135
+    cr_45 = cl_135
+
+    cl_90 = '001100'
+    cr_90 = cl_90
+
+    cl_90_135 = '00111000'
+    cr_90_135 = '00110100'
+
+    cl_45_90 = '00101100'
+    cr_45_90 = '00011100'
+
+    cl_45_135 = '001011010001111000'
+    cr_45_135 = '00011110110100'
+
+    cl_45_90_135 = '0010111000'
+    cr_45_90_135 = '0001110100'
+
+
+class SequenceCounter:
+    def __init__(self, seq):
+        self.seq = seq
+        self.counter = 1
+
+    def count(self):
+        self.counter = self.counter + 1
+
+    def __repr__(self):
+        return f'({bcolors.color(self.seq)}, {str(self.counter)})'
+
+class DirectionIdentifier:
+    def __init__(self):
+        self.foundLeft = []
+        self.lastLeft = ''
+
+        self.foundRight = []
+        self.lastRight = ''
+
+        self.foundCenter = []
+        self.lastCenter = ''
+
+    def push(self, lineSensor):
+        left = lineSensor[:2]
+        right = lineSensor[5:]
+        center = lineSensor[2:5]
+
+        if left == self.lastLeft:
+            self.foundLeft[-1].count()
+        else:
+            self.lastLeft = left
+            self.foundLeft.append(SequenceCounter(left))
+
+        if right == self.lastRight:
+            self.foundRight[-1].count()
+        else:
+            self.lastRight = right
+            self.foundRight.append(SequenceCounter(right))
+
+        if center == self.lastCenter:
+            self.foundCenter[-1].count()
+        else:
+            self.lastCenter = center
+            self.foundCenter.append(SequenceCounter(center))
+
+    def getDirs(self):
+        dirs = []
+        curvesLeft = ''.join(map(lambda sc: ''.join(sc.seq), self.foundLeft))
+        curvesRight = ''.join(map(lambda sc: ''.join(sc.seq), self.foundRight))
+        center = ''.join(map(lambda sc: ''.join(sc.seq), self.foundCenter))
+        
+        if curvesLeft == curv.cl_135:
+            dirs.append(dir.NE)
+        elif curvesLeft == curv.cl_45:
+            dirs.append(dir.NO)
+        elif curvesLeft == curv.cl_90:
+            dirs.append(dir.N)
+        elif curvesLeft == curv.cl_45_90:
+            dirs.append(dir.N)
+            dirs.append(dir.NO)
+        elif curvesLeft == curv.cl_90_135:
+            dirs.append(dir.N)
+            dirs.append(dir.NE)
+        elif curvesLeft == curv.cl_45_135:
+            dirs.append(dir.NE)
+            dirs.append(dir.NO)
+        elif curvesLeft == curv.cl_45_90_135:
+            dirs.append(dir.NE)
+            dirs.append(dir.NO)
+            dirs.append(dir.N)
+
+        if curvesRight == curv.cr_135:
+            dirs.append(dir.SE)
+        elif curvesRight == curv. cr_45:
+            dirs.append(dir.SO)
+        elif curvesRight == curv. cr_90:
+            dirs.append(dir.S)
+        elif curvesRight == curv. cr_45_90:
+            dirs.append(dir.SO)
+            dirs.append(dir.S)
+        elif curvesRight == curv. cr_90_135:
+            dirs.append(dir.S)
+            dirs.append(dir.SE)
+        elif curvesRight == curv. cr_45_135:
+            dirs.append(dir.SE)
+            dirs.append(dir.SO)
+        elif curvesRight == curv. cr_45_90_135:
+            dirs.append(dir.SE)
+            dirs.append(dir.S)
+            dirs.append(dir.SO)
+
+        if '000' not in center:
+            dirs.append(dir.L)
+
+        return dirs
+
+    def reset(self):
+        self.foundLeft = []
+        self.lastLeft = ''
+
+        self.foundRight = []
+        self.lastRight = ''
+
+        self.foundCenter = []
+        self.lastCenter = ''
+
+    
 # Rob
 BASE_SPEED = 0.05
 MAX_SPEED = 0.15
@@ -109,10 +243,11 @@ class MyRob(CRobLinkAngs):
         self.orientation = dir.L
         self.state = "ident"
         # IDENT
+        self.identifier = DirectionIdentifier()
         self.dirs = []
-        self.foundLeft = False
-        self.foundRight = False
-        self.LostCenter = False
+        # self.foundLeft = []
+        # self.foundRight = []
+        # self.foundCenter = []
 
     # In this map the center of cell (i,j), (i in 0..6, j in 0..13) is mapped to labMap[i*2][j*2].
     # to know if there is a wall on top of cell(i,j) (i in 0..5), check if the value of labMap[i*2+1][j*2] is space or not
@@ -140,7 +275,6 @@ class MyRob(CRobLinkAngs):
         # init time instant count
         self.ti = 0
         # init GPS
-
         self.gpsFilter = GPSFilter(self.measures.x,self.measures.y)        
 
         while True:
@@ -180,12 +314,8 @@ class MyRob(CRobLinkAngs):
                 self.drive()
 
     def debug_GO(self):
-        coloredLineSensor = ''.join(map(
-            lambda val: bcolors.RED+str(val)+bcolors.ENDC if val == '0' else bcolors.GREEN+str(val)+bcolors.ENDC, self.lineSensorRead)
-        )
-        coloredLineSensorFiltered = ''.join(map(
-            lambda val: bcolors.RED+str(val)+bcolors.ENDC if val == 0 else bcolors.GREEN+str(val)+bcolors.ENDC, self.lineSensorFilteredRead)
-        )
+        coloredLineSensor = bcolors.color(self.lineSensorRead)
+        coloredLineSensorFiltered = bcolors.color(self.lineSensorFilteredRead)
 
         print(
             '{} <=> {} {} delta: {:4.2f} {:4.2f} error: {:5.2f} p: {:6.2f} i: {:6.2f} d: {:6.2f} PID: {:6.2f} motors: {:5.2f} {:5.2f}'
@@ -197,10 +327,10 @@ class MyRob(CRobLinkAngs):
         )
 
     def determinePosition(self):
-        ones = self.lineSensorFilteredRead.count(1)
-        l2, l1, l0, c, r0, r1, r2 = self.lineSensorFilteredRead
+        ones = self.lineSensorFilteredReadNum[2:5].count(1)
+        l2, l1, l0, c, r0, r1, r2 = self.lineSensorFilteredReadNum
         if ones:    # inside the line
-            self.pos = ((l2*0) + (l1*15) + (l0*25) + (c*30) + (r0*35) + (r1*45) + (r2*60)) / ones
+            self.pos = ((l0*0) + (c*5) + (r0*10)) / ones
         else:       # outside the line
             self.pos = -1
         
@@ -209,24 +339,30 @@ class MyRob(CRobLinkAngs):
             if not self.outside:
                 self.outside = True
                 if self.controller.lastError < 0:
-                    self.error = 30
+                    self.error = 5
                 else:
-                    self.error = -30
+                    self.error = -5
         else:
             if self.outside:
                 self.outside = False
-            self.error = 30 - self.pos       
+            self.error = 5 - self.pos       
 
     def setState(self):
         if self.state == "go":
-            if (self.Dx >= 1.3 and self.Dy == 0) or (self.Dx == 0 and self.Dy >= 1.3):
+            # if (self.Dx >= 1.2 and self.Dy <= 0.1) or (self.Dx <= 0.1 and self.Dy >= 1.2):
+            if  self.dist >= 1.2 or self.dist <= 0.1:
+                self.identifier.reset()
                 self.state = "ident"
-                self.dirs = []
-                self.foundLeft = 0
-                self.foundRight = 0
         elif self.state == "ident":
-            if (0 < self.Dx < 1.3 ) or (0 < self.Dy <1.3):
+            # if (0.1 < self.Dx < 1.2) or (0.1 < self.Dy < 1.2):
+            if 0.1 < self.dist < 1.2:
+                self.dirs = self.identifier.getDirs()
                 self.state = "go"
+                
+                print("Found Left: ", self.identifier.foundLeft)
+                print("Found Right: ", self.identifier.foundRight)
+                print("Found Center: ", self.identifier.foundCenter)
+                print("Dirs: ", self.dirs)
         #         self.state = "turn"
         # elif self.state == "turn":
         #     if (self.Dx > 0.5) or (self.Dy > 0.5):
@@ -239,14 +375,19 @@ class MyRob(CRobLinkAngs):
         # Send it to the filter
         self.lineSensorFilter.update(self.lineSensorRead)
         # Get the filtered line sensor read
-        self.lineSensorFilteredRead = list(map(int, self.lineSensorFilter.read()))
+        self.lineSensorFilteredRead = self.lineSensorFilter.read()  # as str
+        self.lineSensorFilteredReadNum = list(map(int, self.lineSensorFilteredRead))   # as int
         # Update gps filter
         self.gpsFilter.update(self.measures.x,self.measures.y)
         # Calc displacement from the last intersection: (Dx, Dy)
         self.Dx = round(abs(self.gpsFilter.x) % 2, 1)
         self.Dy = round(abs(self.gpsFilter.y) % 2, 1)
+        self.dist = round(sqrt(pow(self.Dx, 2) + pow(self.Dy, 2)),2)
 
-        #print(self.gpsFilter.x,self.gpsFilter.y, self.measures.compass)
+        # Get Compass
+        print(self.dist)
+
+
         
         self.setState()
 
@@ -277,59 +418,35 @@ class MyRob(CRobLinkAngs):
         self.debug_GO()
         
     def ident(self):
-        left = self.lineSensorFilteredRead[:2]
-        right = self.lineSensorFilteredRead[5:]
-        center = self.lineSensorFilteredRead[2:5]
+        self.identifier.push(self.lineSensorFilteredRead)
 
+        # # Compute the powers of the motors
+        # self.lPow = 0.02
+        # self.rPow = 0.02
+        # # Send the drive command
+        # self.driveMotors(self.lPow, self.rPow)
 
-        if left != [0, 0]:
-            if not self.foundLeft:
-                if left == [0, 1]:
-                    self.dirs.append("NE")
-                elif left == [1, 0]:
-                    self.dirs.append("NO")
-                elif left == [1, 1]:
-                    self.dirs.append("N")
-                self.foundLeft = True
+        # test new position calc
+        self.determinePosition()
+        self.calcError()
 
-        if right != [0, 0]:
-            if not self.foundRight:
-                if right == [0, 1]:
-                    self.dirs.append("SO")
-                    self.foundLeft = 1
-                elif right == [1, 0]:
-                    self.dirs.append("SE")
-                elif right == [1, 1]:
-                    self.dirs.append("S")
-                self.foundRight = True
-
-        # if 1 in center:
-        #     if not self.lostCenter:
-        #         self.dirs.remove("?")
-        #     self.lostCenter = True
-        
-        # if self.Dx <= 0:
-        #     pass
-
+        # Get the PID control
+        pid = self.controller.getPID(self.error)
         # Compute the powers of the motors
-        self.lPow = 0.02
-        self.rPow = 0.02
+        self.lPow = round(0.02 - pid, 2)
+        self.rPow = round(0.02 + pid, 2)
         # Send the drive command
         self.driveMotors(self.lPow, self.rPow)
         
         # debug
-        coloredLineSensor = ''.join(map(
-            lambda val: bcolors.RED+str(val)+bcolors.ENDC if val == '0' else bcolors.GREEN+str(val)+bcolors.ENDC, self.lineSensorRead)
-        )
-        coloredLineSensorFiltered = ''.join(map(
-            lambda val: bcolors.RED+str(val)+bcolors.ENDC if val == 0 else bcolors.GREEN+str(val)+bcolors.ENDC, self.lineSensorFilteredRead)
-        )
+        coloredLineSensor = bcolors.color(self.lineSensorRead)
+        coloredLineSensorFiltered = bcolors.color(self.lineSensorFilteredRead)
         
         print(
-            '{} <=> {} {} delta: {:4.2f} {:4.2f} {} motors: {:5.2f} {:5.2f}'
+            '{} <=> {} {} delta: {:4.2f} {:4.2f} left: {} right: {} motors: {:5.2f} {:5.2f}'
                 .format(
                     coloredLineSensor, coloredLineSensorFiltered, self.state.upper(), self.Dx, self.Dy,
-                    self.dirs,
+                    bcolors.color(self.identifier.lastLeft), bcolors.color(self.identifier.lastRight),
                     self.lPow, self.rPow
                 )
         )
@@ -356,12 +473,8 @@ class MyRob(CRobLinkAngs):
         self.driveMotors(self.lPow, self.rPow)
 
         # debug
-        coloredLineSensor = ''.join(map(
-            lambda val: bcolors.RED+str(val)+bcolors.ENDC if val == '0' else bcolors.GREEN+str(val)+bcolors.ENDC, self.lineSensorRead)
-        )
-        coloredLineSensorFiltered = ''.join(map(
-            lambda val: bcolors.RED+str(val)+bcolors.ENDC if val == 0 else bcolors.GREEN+str(val)+bcolors.ENDC, self.lineSensorFilteredRead)
-        )
+        coloredLineSensor = bcolors.color(self.lineSensorRead)
+        coloredLineSensorFiltered = bcolors.color(self.lineSensorFilteredRead)
         
         print(
             '{} <=> {} {} delta: {:4.2f} {:4.2f} motors: {:5.2f} {:5.2f}'
