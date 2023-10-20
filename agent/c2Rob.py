@@ -52,6 +52,9 @@ class LineSensorFilter():
 KP = 0.0020
 KI = 0.0
 KD = 0.0015
+CKP = 0.01
+CKI = 0.0
+CKD = 0
 class PIDController:
     def __init__(self, kp, ki, kd):
         self.kp = kp
@@ -99,8 +102,8 @@ class dir:
     NO = 135
 
 class curv:
-    cl_135 = '0001111000'
-    cr_135 = '0010110100'
+    cl_135 = '00011110'
+    cr_135 = '00101101'
 
     cl_45 = cr_135
     cr_45 = cl_135
@@ -108,17 +111,17 @@ class curv:
     cl_90 = '001100'
     cr_90 = cl_90
 
-    cl_90_135 = '00111000'
-    cr_90_135 = '00110100'
+    cl_90_135 = '001110'
+    cr_90_135 = '001101'
 
     cl_45_90 = '00101100'
     cr_45_90 = '00011100'
 
-    cl_45_135 = '001011010001111000'
-    cr_45_135 = '00011110110100'
+    cl_45_135 = '0010110100011110'
+    cr_45_135 = '000111101101'
 
-    cl_45_90_135 = '0010111000'
-    cr_45_90_135 = '0001110100'
+    cl_45_90_135 = '00101110'
+    cr_45_90_135 = '00011101'
 
 
 class SequenceCounter:
@@ -168,9 +171,24 @@ class DirectionIdentifier:
 
     def getDirs(self):
         dirs = []
+
         curvesLeft = ''.join(map(lambda sc: ''.join(sc.seq), self.foundLeft))
         curvesRight = ''.join(map(lambda sc: ''.join(sc.seq), self.foundRight))
         center = ''.join(map(lambda sc: ''.join(sc.seq), self.foundCenter))
+
+        # if curv.cl_135 in curvesLeft:
+        #     dirs.append(dir.NE)
+        # if curv.cl_90 in curvesLeft:
+        #     dirs.append(dir.N)
+        # if curv.cl_45 in curvesLeft:
+        #     dirs.append(dir.NO)
+
+        # if curv.cr_135 in curvesRight:
+        #     dirs.append(dir.SE)
+        # if curv.cr_90 in curvesRight:
+        #     dirs.append(dir.S)
+        # if curv.cr_45 in curvesRight:
+        #     dirs.append(dir.SO)
         
         if curvesLeft == curv.cl_135:
             dirs.append(dir.NE)
@@ -240,7 +258,6 @@ class MyRob(CRobLinkAngs):
         self.maxSpeed = max_speed
         self.minSpeed = min_speed
         self.outside = False
-        self.orientation = dir.L
         self.state = "ident"
         # IDENT
         self.identifier = DirectionIdentifier()
@@ -270,12 +287,18 @@ class MyRob(CRobLinkAngs):
         self.readSensors()
         # init line sensor filter
         self.lineSensorFilter = LineSensorFilter(FILTER_SIZE, self.measures.lineSensor)
-        # init PID controller      
+        # init orientation
+        self.orientation = int(self.measures.compass)
+        # init PID controllers      
         self.controller = PIDController(KP, KI, KD)
+        self.compassController = PIDController(CKP, CKI, CKD)
         # init time instant count
         self.ti = 0
         # init GPS
-        self.gpsFilter = GPSFilter(self.measures.x,self.measures.y)        
+        self.gpsFilter = GPSFilter(self.measures.x,self.measures.y)
+        # init next intersection
+        self.nextIntersection = (0.0, 0.0)
+            
 
         while True:
             self.readSensors()
@@ -318,13 +341,31 @@ class MyRob(CRobLinkAngs):
         coloredLineSensorFiltered = bcolors.color(self.lineSensorFilteredRead)
 
         print(
-            '{} <=> {} {} delta: {:4.2f} {:4.2f} error: {:5.2f} p: {:6.2f} i: {:6.2f} d: {:6.2f} PID: {:6.2f} motors: {:5.2f} {:5.2f}'
+            '{} <=> {} {} delta: {:4.2f} {:4.2f} {:4.2f} error: {:5.2f} p: {:6.2f} i: {:6.2f} d: {:6.2f} PID: {:6.2f} motors: {:5.2f} {:5.2f}'
                 .format(
-                    coloredLineSensor, coloredLineSensorFiltered, self.state.upper(), self.Dx, self.Dy,
+                    coloredLineSensor, coloredLineSensorFiltered, self.state.upper(), self.Dx, self.Dy, self.dist,
                     self.error, self.controller.p, self.controller.i, self.controller.d, self.controller.pid,
                     self.lPow, self.rPow
                 )
         )
+
+    def getNextIntersection(self):
+        if self.target == dir.NE:
+            self.nextIntersection = (self.gpsFilter.x + 2, self.gpsFilter.y + 2)
+        elif self.target == dir.N:
+            self.nextIntersection = (self.gpsFilter.x, self.gpsFilter.y)
+        elif self.target == dir.NO:
+            self.nextIntersection = (self.gpsFilter.x - 2, self.gpsFilter.y + 2)
+        elif self.target == dir.SE:
+            self.nextIntersection = (self.gpsFilter.x + 2, self.gpsFilter.y - 2)
+        elif self.target == dir.S:
+            self.nextIntersection = (self.gpsFilter.x, self.gpsFilter.y - 2)
+        elif self.target == dir.SO:
+            self.nextIntersection = (self.gpsFilter.x-2, self.gpsFilter.y - 2)
+        elif self.target == dir.L:
+            self.nextIntersection = (self.gpsFilter.x + 2, self.gpsFilter.y)
+        elif self.target == dir.O:
+            self.nextIntersection = (self.gpsFilter.x - 2, self.gpsFilter.y)
 
     def determinePosition(self):
         ones = self.lineSensorFilteredReadNum[2:5].count(1)
@@ -333,7 +374,7 @@ class MyRob(CRobLinkAngs):
             self.pos = ((l0*0) + (c*5) + (r0*10)) / ones
         else:       # outside the line
             self.pos = -1
-        
+
     def calcError(self):
         if self.pos == OUTSIDE_LINE:
             if not self.outside:
@@ -346,28 +387,38 @@ class MyRob(CRobLinkAngs):
             if self.outside:
                 self.outside = False
             self.error = 5 - self.pos       
-
+        
     def setState(self):
         if self.state == "go":
-            # if (self.Dx >= 1.2 and self.Dy <= 0.1) or (self.Dx <= 0.1 and self.Dy >= 1.2):
-            if  self.dist >= 1.2 or self.dist <= 0.1:
+            # if  self.dist >= 1.2 or self.dist < 0:
+            if self.dist <= 0.8:
                 self.identifier.reset()
                 self.state = "ident"
         elif self.state == "ident":
-            # if (0.1 < self.Dx < 1.2) or (0.1 < self.Dy < 1.2):
-            if 0.1 < self.dist < 1.2:
-                self.dirs = self.identifier.getDirs()
+            # if 0 <= self.dist < 1.2:
+            if self.dist == 0:
+                relDirs = self.identifier.getDirs()
+                self.dirs = [self.orientation + d for d in relDirs]
+
+                # decide
+                self.target = self.dirs[0]
+
+                # get next intersection
+                self.getNextIntersection()
+
+                # change state
                 self.state = "go"
-                
+
                 print("Found Left: ", self.identifier.foundLeft)
                 print("Found Right: ", self.identifier.foundRight)
                 print("Found Center: ", self.identifier.foundCenter)
                 print("Dirs: ", self.dirs)
-        #         self.state = "turn"
-        # elif self.state == "turn":
-        #     if (self.Dx > 0.5) or (self.Dy > 0.5):
-        #         self.state = "go"
-        
+                print("Next: ", self.nextIntersection)
+        elif self.state == "turn":
+            if int(self.measures.compass) == self.target:
+                self.orientation = self.target
+                self.state = "go"
+
 
     def drive(self):
         # Get the line sensor read
@@ -379,16 +430,15 @@ class MyRob(CRobLinkAngs):
         self.lineSensorFilteredReadNum = list(map(int, self.lineSensorFilteredRead))   # as int
         # Update gps filter
         self.gpsFilter.update(self.measures.x,self.measures.y)
-        # Calc displacement from the last intersection: (Dx, Dy)
-        self.Dx = round(abs(self.gpsFilter.x) % 2, 1)
-        self.Dy = round(abs(self.gpsFilter.y) % 2, 1)
+        # # Calc displacement from the last intersection: (Dx, Dy)
+        # self.Dx = round(abs(self.gpsFilter.x) % 2, 1)
+        # self.Dy = round(abs(self.gpsFilter.y) % 2, 1)
+        # self.dist = round(sqrt(pow(self.Dx, 2) + pow(self.Dy, 2)),2)
+        nextX, nextY = self.nextIntersection
+        self.Dx = nextX - self.gpsFilter.x
+        self.Dy = nextY - self.gpsFilter.y
         self.dist = round(sqrt(pow(self.Dx, 2) + pow(self.Dy, 2)),2)
 
-        # Get Compass
-        print(self.dist)
-
-
-        
         self.setState()
 
         if self.state == "go":
@@ -420,21 +470,14 @@ class MyRob(CRobLinkAngs):
     def ident(self):
         self.identifier.push(self.lineSensorFilteredRead)
 
-        # # Compute the powers of the motors
-        # self.lPow = 0.02
-        # self.rPow = 0.02
-        # # Send the drive command
-        # self.driveMotors(self.lPow, self.rPow)
-
-        # test new position calc
-        self.determinePosition()
-        self.calcError()
+        # calc compass position error
+        self.identError = self.orientation - self.measures.compass
 
         # Get the PID control
-        pid = self.controller.getPID(self.error)
+        pid = self.compassController.getPID(self.identError)
         # Compute the powers of the motors
-        self.lPow = round(0.02 - pid, 2)
-        self.rPow = round(0.02 + pid, 2)
+        self.lPow = round(0.01 - pid, 2)
+        self.rPow = round(0.01 + pid, 2)
         # Send the drive command
         self.driveMotors(self.lPow, self.rPow)
         
@@ -443,32 +486,25 @@ class MyRob(CRobLinkAngs):
         coloredLineSensorFiltered = bcolors.color(self.lineSensorFilteredRead)
         
         print(
-            '{} <=> {} {} delta: {:4.2f} {:4.2f} left: {} right: {} motors: {:5.2f} {:5.2f}'
+            '{} <=> {} {} delta: {:4.2f} {:4.2f} {:4.2f} left: {} right: {} angle: {:4.2f} error: {:5.2f} p: {:6.2f} i: {:6.2f} d: {:6.2f} PID: {:6.2f} motors: {:5.2f} {:5.2f}'
                 .format(
-                    coloredLineSensor, coloredLineSensorFiltered, self.state.upper(), self.Dx, self.Dy,
-                    bcolors.color(self.identifier.lastLeft), bcolors.color(self.identifier.lastRight),
+                    coloredLineSensor, coloredLineSensorFiltered, self.state.upper(), self.Dx, self.Dy, self.dist,
+                    bcolors.color(self.identifier.lastLeft), bcolors.color(self.identifier.lastRight), self.measures.compass,
+                    self.identError, self.compassController.p, self.compassController.i, self.compassController.d, self.compassController.pid,
                     self.lPow, self.rPow
                 )
         )
 
+
     def turn(self):
+        # calc compass position error
+        self.identError = self.target - self.measures.compass
 
+        # Get the PID control
+        pid = self.compassController.getPID(self.identError)
         # Compute the powers of the motors
-        if self.dirs == ["N"]:
-            self.lPow, self.rPow = (-0.05, 0.05)
-        elif self.dirs == ["NE"]:
-            self.lPow, self.rPow = (0, 0.05)
-        elif self.dirs == ["NO"]:
-            self.lPow, self.rPow = (-0.05, 0.05)
-        elif self.dirs == ["S"]:
-            self.lPow, self.rPow = (0.05, -0.05)
-        elif self.dirs == ["SE"]:
-            self.lPow, self.rPow = (0.05, 0)
-        elif self.dirs == ["SO"]:
-            self.lPow, self.rPow = (0.05, -0.05)
-        else:  
-            self.lPow, self.rPow = (0.03, 0.03)
-
+        self.lPow = round(-pid, 2)
+        self.rPow = round(+pid, 2)
         # Send the drive command
         self.driveMotors(self.lPow, self.rPow)
 
@@ -477,9 +513,10 @@ class MyRob(CRobLinkAngs):
         coloredLineSensorFiltered = bcolors.color(self.lineSensorFilteredRead)
         
         print(
-            '{} <=> {} {} delta: {:4.2f} {:4.2f} motors: {:5.2f} {:5.2f}'
+            '{} <=> {} {} delta: {:4.2f} {:4.2f} {:4.2f} angle: {:4.2f} error: {:5.2f} p: {:6.2f} i: {:6.2f} d: {:6.2f} PID: {:6.2f} motors: {:5.2f} {:5.2f}'
                 .format(
-                    coloredLineSensor, coloredLineSensorFiltered, self.state.upper(), self.Dx, self.Dy,
+                    coloredLineSensor, coloredLineSensorFiltered, self.state.upper(), self.Dx, self.Dy, self.dist, self.measures.compass,
+                    self.identError, self.compassController.p, self.compassController.i, self.compassController.d, self.compassController.pid,
                     self.lPow, self.rPow
                 )
         )
