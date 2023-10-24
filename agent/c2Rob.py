@@ -151,18 +151,20 @@ class DirectionIdentifier:
         left = lineSensor[:2]
         right = lineSensor[5:]
         center = lineSensor[2:5]
+        
+        if left != ['0','0']:
+            if left == self.lastLeft:
+                self.foundLeft[-1].count()
+            else:
+                self.lastLeft = left
+                self.foundLeft.append(SequenceCounter(left))
 
-        if left == self.lastLeft:
-            self.foundLeft[-1].count()
-        else:
-            self.lastLeft = left
-            self.foundLeft.append(SequenceCounter(left))
-
-        if right == self.lastRight:
-            self.foundRight[-1].count()
-        else:
-            self.lastRight = right
-            self.foundRight.append(SequenceCounter(right))
+        if right != ['0','0']:
+            if right == self.lastRight:
+                self.foundRight[-1].count()
+            else:
+                self.lastRight = right
+                self.foundRight.append(SequenceCounter(right))
 
         if center == self.lastCenter:
             self.foundCenter[-1].count()
@@ -171,11 +173,62 @@ class DirectionIdentifier:
             self.foundCenter.append(SequenceCounter(center))
 
     def getDirs(self):
-        dirs = []
+        dirRight = []
+        dirLeft = []
+        center = []
+        dirs = set()
 
-        curvesLeft = ''.join(map(lambda sc: ''.join(sc.seq), self.foundLeft))
-        curvesRight = ''.join(map(lambda sc: ''.join(sc.seq), self.foundRight))
-        center = ''.join(map(lambda sc: ''.join(sc.seq), self.foundCenter))
+        
+        dirRight.extend(list(map(lambda sc: ''.join(sc.seq),self.foundRight)))
+        dirLeft.extend(list(map(lambda sc: ''.join(sc.seq),self.foundLeft)))
+        center.extend(list(map(lambda sc: ''.join(sc.seq),self.foundCenter)))
+        print(f'dirRight: {dirRight}')
+        print(f'dirLeft: {dirLeft}')
+
+        if dirRight:
+            if dirRight[0] == '01':
+                dirs.add(dir.SO)
+            elif dirRight[0] == '11':
+                dirs.add(dir.S)
+            elif dirRight[0] == '10':
+                dirs.add(dir.SE)
+
+            if dirRight[-1] == '01':
+                dirs.add(dir.SE)
+            elif dirRight[-1] == '11':
+                dirs.add(dir.S)
+            elif dirRight[-1] == '10':
+                dirs.add(dir.SO)
+        
+            if dirRight[-1] and dirRight[0] == '01':
+                if dirRight[len(dirRight)//2] == '11':
+                    dirs.add(dir.S)
+        if dirLeft:
+            if dirLeft[0] == '01':
+                dirs.add(dir.NE)
+            elif dirLeft[0] == '11':
+                dirs.add(dir.N)
+            elif dirLeft[0] == '10':
+                dirs.add(dir.NO)
+
+            if dirLeft[-1] == '01':
+                dirs.add(dir.NO)
+            elif dirLeft[-1] == '11':
+                dirs.add(dir.N)
+            elif dirLeft[-1] == '10':
+                dirs.add(dir.NE)
+
+            if dirLeft[-1] and dirLeft[0] == '10':
+               if dirLeft[len(dirLeft)//2] == '11':
+                    dirs.add(dir.N) 
+
+        
+        if '000' not in center:
+            dirs.add(dir.L)
+
+        # curvesLeft = ''.join(map(lambda sc: ''.join(sc.seq), self.foundLeft))
+        # curvesRight = ''.join(map(lambda sc: ''.join(sc.seq), self.foundRight))
+        # center = ''.join(map(lambda sc: ''.join(sc.seq), self.foundCenter))
 
         # if curv.cl_135 in curvesLeft:
         #     dirs.append(dir.NE)
@@ -191,50 +244,51 @@ class DirectionIdentifier:
         # if curv.cr_45 in curvesRight:
         #     dirs.append(dir.SO)
         
-        if curvesLeft == curv.cl_135:
-            dirs.append(dir.NE)
-        elif curvesLeft == curv.cl_45:
-            dirs.append(dir.NO)
-        elif curvesLeft == curv.cl_90:
-            dirs.append(dir.N)
-        elif curvesLeft == curv.cl_45_90:
-            dirs.append(dir.N)
-            dirs.append(dir.NO)
-        elif curvesLeft == curv.cl_90_135:
-            dirs.append(dir.N)
-            dirs.append(dir.NE)
-        elif curvesLeft == curv.cl_45_135:
-            dirs.append(dir.NE)
-            dirs.append(dir.NO)
-        elif curvesLeft == curv.cl_45_90_135:
-            dirs.append(dir.NE)
-            dirs.append(dir.NO)
-            dirs.append(dir.N)
+        # if curvesLeft == curv.cl_135:
+        #     dirs.append(dir.NE)
+        # elif curvesLeft == curv.cl_45:
+        #     dirs.append(dir.NO)
+        # elif curvesLeft == curv.cl_90:
+        #     dirs.append(dir.N)
+        # elif curvesLeft == curv.cl_45_90:
+        #     dirs.append(dir.N)
+        #     dirs.append(dir.NO)
+        # elif curvesLeft == curv.cl_90_135:
+        #     dirs.append(dir.N)
+        #     dirs.append(dir.NE)
+        # elif curvesLeft == curv.cl_45_135:
+        #     dirs.append(dir.NE)
+        #     dirs.append(dir.NO)
+        # elif curvesLeft == curv.cl_45_90_135:
+        #     dirs.append(dir.NE)
+        #     dirs.append(dir.NO)
+        #     dirs.append(dir.N)
 
-        if curvesRight == curv.cr_135:
-            dirs.append(dir.SE)
-        elif curvesRight == curv. cr_45:
-            dirs.append(dir.SO)
-        elif curvesRight == curv. cr_90:
-            dirs.append(dir.S)
-        elif curvesRight == curv. cr_45_90:
-            dirs.append(dir.SO)
-            dirs.append(dir.S)
-        elif curvesRight == curv. cr_90_135:
-            dirs.append(dir.S)
-            dirs.append(dir.SE)
-        elif curvesRight == curv. cr_45_135:
-            dirs.append(dir.SE)
-            dirs.append(dir.SO)
-        elif curvesRight == curv. cr_45_90_135:
-            dirs.append(dir.SE)
-            dirs.append(dir.S)
-            dirs.append(dir.SO)
+        # if curvesRight == curv.cr_135:
+        #     dirs.append(dir.SE)
+        # elif curvesRight == curv. cr_45:
+        #     dirs.append(dir.SO)
+        # elif curvesRight == curv. cr_90:
+        #     dirs.append(dir.S)
+        # elif curvesRight == curv. cr_45_90:
+        #     dirs.append(dir.SO)
+        #     dirs.append(dir.S)
+        # elif curvesRight == curv. cr_90_135:
+        #     dirs.append(dir.S)
+        #     dirs.append(dir.SE)
+        # elif curvesRight == curv. cr_45_135:
+        #     dirs.append(dir.SE)
+        #     dirs.append(dir.SO)
+        # elif curvesRight == curv. cr_45_90_135:
+        #     dirs.append(dir.SE)
+        #     dirs.append(dir.S)
+        #     dirs.append(dir.SO)
 
-        if '000' not in center:
-            dirs.append(dir.L)
-
-        return dirs
+        # if '000' not in center:
+        #     dirs.append(dir.L)
+        
+        print(f'Dirs: {dirs}')
+        return list(dirs)
 
     def reset(self):
         self.foundLeft = []
@@ -349,7 +403,7 @@ class MyRob(CRobLinkAngs):
         if self.target == dir.NE:
             self.nextIntersection = (self.gpsFilter.x + 2, self.gpsFilter.y + 2)
         elif self.target == dir.N:
-            self.nextIntersection = (self.gpsFilter.x, self.gpsFilter.y)
+            self.nextIntersection = (self.gpsFilter.x, self.gpsFilter.y +2)
         elif self.target == dir.NO:
             self.nextIntersection = (self.gpsFilter.x - 2, self.gpsFilter.y + 2)
         elif self.target == dir.SE:
