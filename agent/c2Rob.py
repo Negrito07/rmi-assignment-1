@@ -53,7 +53,7 @@ GKP = 0.035
 GKI = 0.015
 GKD = 0.0
 
-CKP = 0.01
+CKP = 0.005
 CKI = 0.0
 CKD = 0.0
 class PIDController:
@@ -93,14 +93,17 @@ class GPSFilter:
 
 # Orientation
 class dir:
-    N = 90
-    NE = 45
-    L = 0
-    SE = -45
-    S = -90
-    SO = -135
-    O = -180
-    NO = 135
+    directions = [0, 45, 90, 135, -180, -135, -90, -45]
+    L, NE, N, NO, O, SO, S, SE = [int(angle) // 45 for angle in directions]
+
+    def fromRelative(orientation, relative):
+        base = (orientation + relative) % len(dir.directions)
+        return dir.directions[base]
+    
+    def fromAngle(angle):
+        direction = int(angle) // 45
+        return direction
+
 
 class curv:
     cl_135 = '0001111000'
@@ -233,6 +236,8 @@ class DirectionIdentifier:
 
         if '000' not in center:
             dirs.append(dir.L)
+        else: 
+            dirs.append(dir.O)
 
         return dirs
 
@@ -257,7 +262,9 @@ class MyRob(CRobLinkAngs):
         self.maxSpeed = max_speed
         self.minSpeed = min_speed
         self.outside = False
+        # states
         self.state = "ident"
+        self.transition = 0
         # IDENT
         self.identifier = DirectionIdentifier()
         self.dirs = []
@@ -286,14 +293,13 @@ class MyRob(CRobLinkAngs):
         # init GPS
         self.gpsFilter = GPSFilter(self.measures.x,self.measures.y)
         self.gpsFilter.update(self.measures.x,self.measures.y)
+        # init target
+        self.target = (self.gpsFilter.x, self.gpsFilter.y)
         # init orientation
-        self.orientation = int(self.measures.compass)
-        self.target = self.orientation
+        self.orientation = dir.fromAngle(self.measures.compass)
         # init PID controllers      
         self.gpsController = PIDController(GKP, GKI, GKD)
         self.compassController = PIDController(CKP, CKI, CKD)
-        # init next intersection
-        self.getNextIntersection()
             
 
         while True:
@@ -332,70 +338,82 @@ class MyRob(CRobLinkAngs):
                 #self.wander()
                 self.drive()
 
-    def debug_GO(self):
-        coloredLineSensor = bcolors.color(self.lineSensorRead)
-        coloredLineSensorFiltered = bcolors.color(self.lineSensorFilteredRead)
-
-        print(
-            '{} <=> {} {} delta: {:4.2f} {:4.2f} {:4.2f} error: {:5.2f} p: {:6.2f} i: {:6.2f} d: {:6.2f} PID: {:6.2f} motors: {:5.2f} {:5.2f}'
-                .format(
-                    coloredLineSensor, coloredLineSensorFiltered, self.state.upper(), self.Dx, self.Dy, self.dist,
-                    self.error, self.controller.p, self.controller.i, self.controller.d, self.controller.pid,
-                    self.lPow, self.rPow
-                )
-        )
-
-    def getNextIntersection(self):
-        if self.target == dir.NE:
-            self.nextIntersection = (self.gpsFilter.x + 2, self.gpsFilter.y + 2)
-        elif self.target == dir.N:
-            self.nextIntersection = (self.gpsFilter.x, self.gpsFilter.y)
-        elif self.target == dir.NO:
-            self.nextIntersection = (self.gpsFilter.x - 2, self.gpsFilter.y + 2)
-        elif self.target == dir.SE:
-            self.nextIntersection = (self.gpsFilter.x + 2, self.gpsFilter.y - 2)
-        elif self.target == dir.S:
-            self.nextIntersection = (self.gpsFilter.x, self.gpsFilter.y - 2)
-        elif self.target == dir.SO:
-            self.nextIntersection = (self.gpsFilter.x-2, self.gpsFilter.y - 2)
-        elif self.target == dir.L:
-            self.nextIntersection = (self.gpsFilter.x + 2, self.gpsFilter.y)
-        elif self.target == dir.O:
-            self.nextIntersection = (self.gpsFilter.x - 2, self.gpsFilter.y)      
+    def getTarget(self):
+        if self.orientation == dir.NE:
+            self.target = (self.gpsFilter.x + 2, self.gpsFilter.y + 2)
+        elif self.orientation == dir.N:
+            self.target = (self.gpsFilter.x, self.gpsFilter.y + 2)
+        elif self.orientation == dir.NO:
+            self.target = (self.gpsFilter.x - 2, self.gpsFilter.y + 2)
+        elif self.orientation == dir.SE:
+            self.target = (self.gpsFilter.x + 2, self.gpsFilter.y - 2)
+        elif self.orientation  == dir.S:
+            self.target = (self.gpsFilter.x, self.gpsFilter.y - 2)
+        elif self.orientation == dir.SO:
+            self.target = (self.gpsFilter.x-2, self.gpsFilter.y - 2)
+        elif self.orientation == dir.L:
+            self.target = (self.gpsFilter.x + 2, self.gpsFilter.y)
+        elif self.orientation == dir.O:
+            self.target = (self.gpsFilter.x - 2, self.gpsFilter.y)      
         
     def setState(self):
-        if self.state == "go":
-            # if  self.dist >= 1.2 or self.dist < 0:
-            if self.dist <= 0.8:
-                self.identifier.reset()
-                self.state = "ident"
-        elif self.state == "ident":
-            # if 0 <= self.dist < 1.2:
+        if self.state == "ident":
+            # count transition condition
             if self.dist == 0:
-                relDirs = self.identifier.getDirs()
-                self.dirs = [self.orientation + d for d in relDirs]
-
-                # decide
-                self.target = self.dirs[0]
-
-                # get next intersection
-                self.getNextIntersection()
-
-                # change state
-                self.state = "go"
-
+                self.transition = self.transition + 1
+            else:
+                self.transition = 0
+            
+            # let transition condition stabilize
+            stable = 10
+            if self.transition == stable:
+                # debug
                 print("Found Left: ", self.identifier.foundLeft)
                 print("Found Right: ", self.identifier.foundRight)
                 print("Found Center: ", self.identifier.foundCenter)
+
+                # init turn variables
+                # identify possible turns
+                relDirs = self.identifier.getDirs()
+                self.dirs = [dir.fromRelative(self.orientation, relDir) for relDir in relDirs]
+
+                # decide which turn to take
+                self.orientation = dir.fromAngle(self.dirs[0])
+
                 print("Dirs: ", self.dirs)
-                print("Next: ", self.nextIntersection)
+                print("Turn: ", dir.directions[self.orientation])
+                
+                # change to next state
+                self.state = "turn"
+                self.transition = 0
         elif self.state == "turn":
-            if int(self.measures.compass) == self.target:
-                self.orientation = self.target
+            # count transition condition
+            if self.measures.compass == dir.directions[self.orientation]:
+                self.transition = self.transition + 1
+            else:
+                self.transition = 0
+            
+            # let transition condition stabilize
+            stable = 5
+            if self.transition == stable:
+                # init go variables
+                self.getTarget()
+
+                print("Next Target: ", self.target)
+
+                # change to next state
                 self.state = "go"
+                self.transition = 0
+        elif self.state == "go":
+            if self.dist <= 0.85:
+                # init ident variables
+                self.identifier.reset()
+                # change to ident state
+                self.state = "ident"
 
 
     def drive(self):
+        # sense
         # Get the line sensor read
         self.lineSensorRead = self.measures.lineSensor
         # Send it to the filter
@@ -405,17 +423,18 @@ class MyRob(CRobLinkAngs):
         self.lineSensorFilteredReadNum = list(map(int, self.lineSensorFilteredRead))   # as int
         # Update gps filter
         self.gpsFilter.update(self.measures.x,self.measures.y)
-        # Calc distance to next intersection
-        nextX, nextY = self.nextIntersection
+        # Calc distance to target
+        nextX, nextY = self.target
         self.Dx = nextX - self.gpsFilter.x
         self.Dy = nextY - self.gpsFilter.y
         self.dist = round(sqrt(pow(self.Dx, 2) + pow(self.Dy, 2)),2)
 
-        # pilotar o carro
+        
+        # drive
         # calc distance error
         self.posError = self.dist
         # calc orientation error
-        self.angError = self.orientation - self.measures.compass
+        self.angError = dir.directions[self.orientation] - self.measures.compass
 
         # Get the PID control
         pidSpeed = self.gpsController.getPID(self.posError)
@@ -426,131 +445,25 @@ class MyRob(CRobLinkAngs):
         # Send the drive command
         self.driveMotors(self.lPow, self.rPow)
 
-        # Scan
-        if self.dist <= 0.8:
-            self.identifier.push(self.lineSensorFilteredRead)
-
-        # Identify
-        if self.dist == 0.0:
-            relDirs = self.identifier.getDirs()
-            self.dirs = [self.orientation + d for d in relDirs]
-
-            # decide
-            self.target = self.dirs[0]
-            
-
-            # get next intersection
-            self.getNextIntersection()      # next position error
-            self.orientation = self.target  # next an error
-
-            print("Found Left: ", self.identifier.foundLeft)
-            print("Found Right: ", self.identifier.foundRight)
-            print("Found Center: ", self.identifier.foundCenter)
-            print("Dirs: ", self.dirs)
-            print("Next: ", self.nextIntersection)
-
-            # clean 
-            self.identifier.reset()
-            self.dirs = []
-
         # debug
         coloredLineSensor = bcolors.color(self.lineSensorRead)
         coloredLineSensorFiltered = bcolors.color(self.lineSensorFilteredRead)
 
         print(
-            '{} <=> {} coord: {:4.2f} {:4.2f} dist: {:4.2f} error: {:5.2f} p: {:6.2f} i: {:6.2f} angle: {:4.2f} error: {:5.2f} p: {:6.2f} motors: {:5.2f} {:5.2f}'
+            '{} <=> {} {:4s} coord: {:4.2f} {:4.2f} dist: {:4.2f} error: {:5.2f} p: {:5.2f} i: {:5.2f} angle: {:4.2f} error: {:5.2f} p: {:5.2f} motors: {:5.2f} {:5.2f}'
                 .format(
-                    coloredLineSensor, coloredLineSensorFiltered,
+                    coloredLineSensor, coloredLineSensorFiltered, self.state.upper(),
                     self.gpsFilter.x, self.gpsFilter.y, self.dist, self.posError, self.gpsController.p, self.gpsController.i,
                     self.measures.compass, self.angError, self.compassController.p,
                     self.lPow, self.rPow
                 )
         )
         
+        # process state
+        if self.state == "ident":
+            self.identifier.push(self.lineSensorFilteredRead)
+        self.setState()
 
-
-        # self.setState()
-
-        # if self.state == "go":
-        #     self.go()
-        # elif self.state == "ident":
-        #     self.ident()
-        # elif self.state == "turn":
-        #     self.turn()
-
-    def go(self):
-        # Increment the time instant
-        self.ti = self.ti+1
-        
-        # test new position calc
-        self.determinePosition()
-        self.calcError()
-
-        # Get the PID control
-        pid = self.controller.getPID(self.error)
-        # Compute the powers of the motors
-        self.lPow = round(self.baseSpeed - pid, 2)
-        self.rPow = round(self.baseSpeed + pid, 2)
-        # Send the drive command
-        self.driveMotors(self.lPow, self.rPow)
-
-        # debug
-        self.debug_GO()
-        
-    def ident(self):
-        self.identifier.push(self.lineSensorFilteredRead)
-
-        # calc compass position error
-        self.identError = self.orientation - self.measures.compass
-
-        # Get the PID control
-        pid = self.compassController.getPID(self.identError)
-        # Compute the powers of the motors
-        self.lPow = round(0.01 - pid, 2)
-        self.rPow = round(0.01 + pid, 2)
-        # Send the drive command
-        self.driveMotors(self.lPow, self.rPow)
-        
-        # debug
-        coloredLineSensor = bcolors.color(self.lineSensorRead)
-        coloredLineSensorFiltered = bcolors.color(self.lineSensorFilteredRead)
-        
-        print(
-            '{} <=> {} {} delta: {:4.2f} {:4.2f} {:4.2f} left: {} right: {} angle: {:4.2f} error: {:5.2f} p: {:6.2f} i: {:6.2f} d: {:6.2f} PID: {:6.2f} motors: {:5.2f} {:5.2f}'
-                .format(
-                    coloredLineSensor, coloredLineSensorFiltered, self.state.upper(), self.Dx, self.Dy, self.dist,
-                    bcolors.color(self.identifier.lastLeft), bcolors.color(self.identifier.lastRight), self.measures.compass,
-                    self.identError, self.compassController.p, self.compassController.i, self.compassController.d, self.compassController.pid,
-                    self.lPow, self.rPow
-                )
-        )
-
-
-    def turn(self):
-        # calc compass position error
-        self.identError = self.target - self.measures.compass
-
-        # Get the PID control
-        pid = self.compassController.getPID(self.identError)
-        # Compute the powers of the motors
-        self.lPow = round(-pid, 2)
-        self.rPow = round(+pid, 2)
-        # Send the drive command
-        self.driveMotors(self.lPow, self.rPow)
-
-        # debug
-        coloredLineSensor = bcolors.color(self.lineSensorRead)
-        coloredLineSensorFiltered = bcolors.color(self.lineSensorFilteredRead)
-        
-        print(
-            '{} <=> {} {} delta: {:4.2f} {:4.2f} {:4.2f} angle: {:4.2f} error: {:5.2f} p: {:6.2f} i: {:6.2f} d: {:6.2f} PID: {:6.2f} motors: {:5.2f} {:5.2f}'
-                .format(
-                    coloredLineSensor, coloredLineSensorFiltered, self.state.upper(), self.Dx, self.Dy, self.dist, self.measures.compass,
-                    self.identError, self.compassController.p, self.compassController.i, self.compassController.d, self.compassController.pid,
-                    self.lPow, self.rPow
-                )
-        )
-        
     def wander(self):
         center_id = 0
         left_id = 1
