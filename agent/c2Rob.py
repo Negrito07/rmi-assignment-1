@@ -49,13 +49,17 @@ class LineSensorFilter():
         return filtered
     
 # PID
-GKP = 0.035
-GKI = 0.015
-GKD = 0.0
+GKP = 0.05
+GKI = 0.0
+GKD = 0.005
 
-CKP = 0.005
+CKP = 0.005 
 CKI = 0.0
-CKD = 0.0
+CKD = 0.003
+
+LKP = 0.01
+LKI = 0.0
+LKD = 0.0
 class PIDController:
     def __init__(self, kp, ki, kd):
         self.kp = kp
@@ -68,16 +72,23 @@ class PIDController:
         self.pid = 0
 
         self.lastError = 0
+        self.accumError = 0
 
     def getPID(self, error):
         self.p = self.kp * (error)
-        self.i = self.ki * (self.i + error)
+        self.i = self.ki * (self.accumError + error)
         self.d = self.kd * (error - self.lastError)
 
         self.lastError = error
+        self.accumError = self.accumError + error
 
         self.pid = self.p + self.i + self.d
         return self.pid
+    
+    def reset(self, startError=0):
+        self.lastError = startError
+        self.accumError = startError
+
 
 # Displacement
 class GPSFilter:
@@ -180,14 +191,13 @@ class DirectionIdentifier:
         dirLeft = []
         center = []
         dirs = set()
-
         
-        dirRight.extend(list(map(lambda sc: ''.join(sc.seq),self.foundRight)))
-        dirLeft.extend(list(map(lambda sc: ''.join(sc.seq),self.foundLeft)))
-        center.extend(list(map(lambda sc: ''.join(sc.seq),self.foundCenter)))
-        print(f'dirRight: {dirRight}')
-        print(f'dirLeft: {dirLeft}')
-
+        dirRight.extend(list(map(lambda sc: ''.join(sc.seq), filter(lambda sc: sc.counter >= 2,self.foundRight))))
+        dirLeft.extend(list(map(lambda sc: ''.join(sc.seq), filter(lambda sc: sc.counter >= 2,self.foundLeft))))
+        center.extend(list(map(lambda sc: ''.join(sc.seq), filter(lambda sc: sc.counter >= 2,self.foundCenter))))
+        # print(f'dirRight: {dirRight}')
+        # print(f'dirLeft: {dirLeft}')
+        
         if dirRight:
             if dirRight[0] == '01':
                 dirs.add(dir.SO)
@@ -225,73 +235,9 @@ class DirectionIdentifier:
                if dirLeft[len(dirLeft)//2] == '11':
                     dirs.add(dir.N) 
 
-        
         if '000' not in center:
             dirs.add(dir.L)
-        else: 
-            dirs.add(dir.O)
 
-        # curvesLeft = ''.join(map(lambda sc: ''.join(sc.seq), self.foundLeft))
-        # curvesRight = ''.join(map(lambda sc: ''.join(sc.seq), self.foundRight))
-        # center = ''.join(map(lambda sc: ''.join(sc.seq), self.foundCenter))
-
-        # if curv.cl_135 in curvesLeft:
-        #     dirs.append(dir.NE)
-        # if curv.cl_90 in curvesLeft:
-        #     dirs.append(dir.N)
-        # if curv.cl_45 in curvesLeft:
-        #     dirs.append(dir.NO)
-
-        # if curv.cr_135 in curvesRight:
-        #     dirs.append(dir.SE)
-        # if curv.cr_90 in curvesRight:
-        #     dirs.append(dir.S)
-        # if curv.cr_45 in curvesRight:
-        #     dirs.append(dir.SO)
-        
-        # if curvesLeft == curv.cl_135:
-        #     dirs.append(dir.NE)
-        # elif curvesLeft == curv.cl_45:
-        #     dirs.append(dir.NO)
-        # elif curvesLeft == curv.cl_90:
-        #     dirs.append(dir.N)
-        # elif curvesLeft == curv.cl_45_90:
-        #     dirs.append(dir.N)
-        #     dirs.append(dir.NO)
-        # elif curvesLeft == curv.cl_90_135:
-        #     dirs.append(dir.N)
-        #     dirs.append(dir.NE)
-        # elif curvesLeft == curv.cl_45_135:
-        #     dirs.append(dir.NE)
-        #     dirs.append(dir.NO)
-        # elif curvesLeft == curv.cl_45_90_135:
-        #     dirs.append(dir.NE)
-        #     dirs.append(dir.NO)
-        #     dirs.append(dir.N)
-
-        # if curvesRight == curv.cr_135:
-        #     dirs.append(dir.SE)
-        # elif curvesRight == curv. cr_45:
-        #     dirs.append(dir.SO)
-        # elif curvesRight == curv. cr_90:
-        #     dirs.append(dir.S)
-        # elif curvesRight == curv. cr_45_90:
-        #     dirs.append(dir.SO)
-        #     dirs.append(dir.S)
-        # elif curvesRight == curv. cr_90_135:
-        #     dirs.append(dir.S)
-        #     dirs.append(dir.SE)
-        # elif curvesRight == curv. cr_45_135:
-        #     dirs.append(dir.SE)
-        #     dirs.append(dir.SO)
-        # elif curvesRight == curv. cr_45_90_135:
-        #     dirs.append(dir.SE)
-        #     dirs.append(dir.S)
-        #     dirs.append(dir.SO)
-
-        # if '000' not in center:
-        #     dirs.append(dir.L)
-        
         return list(dirs)
 
     def reset(self):
@@ -303,6 +249,24 @@ class DirectionIdentifier:
 
         self.foundCenter = []
         self.lastCenter = ''
+
+
+# Map
+class Path:
+    def __init__(self, dir):
+        self.dir = dir
+        self.visited = False
+
+    def __repr__(self):
+        return '({}, {})'.format(self.dir, self.visited)
+    
+
+class Intersection:
+    def __init__(self, dirs):
+        self.paths = [Path(dir) for dir in dirs]
+    
+    def __repr__(self):
+        return 'I('+repr(self.paths)+')'
 
     
 # Rob
@@ -321,6 +285,8 @@ class MyRob(CRobLinkAngs):
         # IDENT
         self.identifier = DirectionIdentifier()
         self.dirs = []
+        # map
+        self.map = {}
 
     # In this map the center of cell (i,j), (i in 0..6, j in 0..13) is mapped to labMap[i*2][j*2].
     # to know if there is a wall on top of cell(i,j) (i in 0..5), check if the value of labMap[i*2+1][j*2] is space or not
@@ -350,9 +316,11 @@ class MyRob(CRobLinkAngs):
         self.target = (self.gpsFilter.x, self.gpsFilter.y)
         # init orientation
         self.orientation = dir.fromAngle(self.measures.compass)
+        self.turn = self.orientation
         # init PID controllers      
         self.gpsController = PIDController(GKP, GKI, GKD)
         self.compassController = PIDController(CKP, CKI, CKD)
+        self.lineController = PIDController(LKP, LKI, LKD)
             
 
         while True:
@@ -406,19 +374,19 @@ class MyRob(CRobLinkAngs):
             self.target = (self.gpsFilter.x-2, self.gpsFilter.y - 2)
         elif self.orientation == dir.L:
             self.target = (self.gpsFilter.x + 2, self.gpsFilter.y)
-        elif self.orientation == dir.O:
+        elif self.orientation == dir.O or self.orientation == - dir.O:
             self.target = (self.gpsFilter.x - 2, self.gpsFilter.y)      
         
     def setState(self):
         if self.state == "ident":
             # count transition condition
-            if self.dist == 0:
+            if self.posError == 0:
                 self.transition = self.transition + 1
             else:
                 self.transition = 0
             
             # let transition condition stabilize
-            stable = 10
+            stable = 5
             if self.transition == stable:
                 # debug
                 print("Found Left: ", self.identifier.foundLeft)
@@ -427,29 +395,51 @@ class MyRob(CRobLinkAngs):
 
                 # init turn variables
                 # identify possible turns
-                relDirs = self.identifier.getDirs()
-                self.dirs = [dir.fromRelative(self.orientation, relDir) for relDir in relDirs]
+                self.relDirs = self.identifier.getDirs()
+                # back is always possible
+                self.relDirs.append(dir.O)
+                # get global dirs for the map
+                self.globalDirs = [dir.fromRelative(self.orientation, relDir) for relDir in self.relDirs]
+                
+                inter = (int(self.gpsFilter.x), int(self.gpsFilter.y))
+                if not (inter in self.map):
+                    self.map[inter] = Intersection(self.globalDirs)
+
 
                 # decide which turn to take
-                self.orientation = dir.fromAngle(self.dirs[0])
+                self.turn = self.relDirs[0]
 
-                print("Dirs: ", self.dirs)
-                print("Turn: ", dir.directions[self.orientation])
+                print("Orientation: ", dir.directions[self.orientation])
+                print("Dirs: ", list(map(lambda rel: dir.directions[rel], self.relDirs)))
+                print("Turn: ", dir.directions[self.turn])
                 
+                # show map
+                print(self.map)
+
                 # change to next state
                 self.state = "turn"
                 self.transition = 0
+                self.first = True
         elif self.state == "turn":
+            if self.first:
+                # reset compass controller
+                self.compassController.reset(self.angError)
+                # reset flag
+                self.first = False
+
             # count transition condition
-            if self.measures.compass == dir.directions[self.orientation]:
+            if self.angError == 0:
                 self.transition = self.transition + 1
             else:
                 self.transition = 0
             
             # let transition condition stabilize
-            stable = 5
+            stable = 3
             if self.transition == stable:
                 # init go variables
+                self.orientation = dir.fromAngle(self.measures.compass)
+                self.turn = 0
+                print(self.orientation)
                 self.getTarget()
 
                 print("Next Target: ", self.target)
@@ -457,8 +447,15 @@ class MyRob(CRobLinkAngs):
                 # change to next state
                 self.state = "go"
                 self.transition = 0
+                self.first = True
         elif self.state == "go":
-            if self.dist <= 0.85:
+            if self.first:
+                # reset gps controller
+                self.gpsController.reset(self.posError)
+                # reset flag
+                self.first = False
+
+            if self.posError <= 0.85:
                 # init ident variables
                 self.identifier.reset()
                 # change to ident state
@@ -481,21 +478,48 @@ class MyRob(CRobLinkAngs):
         self.Dx = nextX - self.gpsFilter.x
         self.Dy = nextY - self.gpsFilter.y
         self.dist = round(sqrt(pow(self.Dx, 2) + pow(self.Dy, 2)),2)
-
-        
-        # drive
         # calc distance error
         self.posError = self.dist
         # calc orientation error
-        self.angError = dir.directions[self.orientation] - self.measures.compass
+        dAng = dir.directions[self.turn] - (self.measures.compass - dir.directions[self.orientation])
+        # dRad = dAng * pi / 180
+        # self.angError = abs(cos(dRad) - 1) * 50
+        self.angError = abs(dAng)
+        if self.angError > 180:
+            self.angError = 360 - self.angError
+            dAng = - dAng
+        # calc center line error
+        center = self.lineSensorFilteredReadNum[2:5]
+        ones = center.count(1)
+        l0, c, r0 = center
+        if ones:
+            linePos = ((l0*0) + (c*1) + (r0*2)) / ones
+        else:
+            linePos = 1
+        self.lineError = 1 - linePos
+        
+        # change state
+        self.setState()
 
+        # process state
         # Get the PID control
         pidSpeed = self.gpsController.getPID(self.posError)
-        pidTurn = self.compassController.getPID(self.angError)
+        pidCompass = self.compassController.getPID(self.angError)
+        pidLine = self.lineController.getPID(self.lineError)
+
+        if dAng < 0:
+            pidCompass = - pidCompass
+        
+        pidTurn = pidCompass
+        if self.state == "ident":
+            self.identifier.push(self.lineSensorFilteredRead)
+        elif self.state == "go":
+            pidTurn = pidCompass + pidLine
+
         # Compute the powers of the motors
         self.lPow = round(pidSpeed - pidTurn, 2)
         self.rPow = round(pidSpeed + pidTurn, 2)
-        # Send the drive command
+        # Send drive command
         self.driveMotors(self.lPow, self.rPow)
 
         # debug
@@ -503,19 +527,17 @@ class MyRob(CRobLinkAngs):
         coloredLineSensorFiltered = bcolors.color(self.lineSensorFilteredRead)
 
         print(
-            '{} <=> {} {:4s} coord: {:4.2f} {:4.2f} dist: {:4.2f} error: {:5.2f} p: {:5.2f} i: {:5.2f} angle: {:4.2f} error: {:5.2f} p: {:5.2f} motors: {:5.2f} {:5.2f}'
+            '{} {:4s} coord: {:4.2f} {:4.2f} dist: {:4.2f} error: {:5.2f} p: {:5.2f} i: {:5.2f} angle: {:3.0f} error: {:5.2f} p: {:5.2f} i: {:5.2f} d: {:5.2f} line: {:3.1f} error: {:3.1f} p: {:5.2f} motors: {:5.2f} {:5.2f}'
                 .format(
-                    coloredLineSensor, coloredLineSensorFiltered, self.state.upper(),
+                    coloredLineSensorFiltered, self.state.upper(),
                     self.gpsFilter.x, self.gpsFilter.y, self.dist, self.posError, self.gpsController.p, self.gpsController.i,
-                    self.measures.compass, self.angError, self.compassController.p,
+                    self.measures.compass, self.angError, self.compassController.p, self.compassController.i, self.compassController.d,
+                    linePos, self.lineError, self.lineController.p,
                     self.lPow, self.rPow
                 )
         )
+
         
-        # process state
-        if self.state == "ident":
-            self.identifier.push(self.lineSensorFilteredRead)
-        self.setState()
 
     def wander(self):
         center_id = 0
