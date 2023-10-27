@@ -792,6 +792,9 @@ void cbSimulator::ViewCommands()
                         }
 						break;
 					}
+				case cbCommand::RESET:
+					reset();
+					break;
 				case cbCommand::UNKNOWN:
 					//cout << "View command = Unknown\n";
 					break;
