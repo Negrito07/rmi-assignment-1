@@ -106,6 +106,7 @@ class GPSFilter:
 class dir:
     directions = [0, 45, 90, 135, -180, -135, -90, -45]
     L, NE, N, NO, O, SO, S, SE = [int(angle) // 45 for angle in directions]
+    chars = ['-', '/', '|', '\\']
 
     def fromRelative(orientation, relative):
         base = (orientation + relative) % len(dir.directions)
@@ -118,6 +119,7 @@ class dir:
     def fromAngle(angle):
         direction = int(angle) // 45
         return direction
+    
 
 
 class curv:
@@ -196,11 +198,11 @@ class DirectionIdentifier:
         center = []
         dirs = set()
         
-        dirRight.extend(list(map(lambda sc: ''.join(sc.seq), filter(lambda sc: sc.counter >= 2,self.foundRight))))
-        dirLeft.extend(list(map(lambda sc: ''.join(sc.seq), filter(lambda sc: sc.counter >= 2,self.foundLeft))))
-        center.extend(list(map(lambda sc: ''.join(sc.seq), filter(lambda sc: sc.counter >= 2,self.foundCenter))))
-        print(f'dirRight: {dirRight}')
-        print(f'dirLeft: {dirLeft}')
+        dirRight.extend(list(map(lambda sc: ''.join(sc.seq), self.foundRight)))
+        dirLeft.extend(list(map(lambda sc: ''.join(sc.seq), self.foundLeft)))
+        center.extend(list(map(lambda sc: ''.join(sc.seq), self.foundCenter)))
+        # print(f'dirRight: {dirRight}')
+        # print(f'dirLeft: {dirLeft}')
         
         if dirRight:
             if dirRight[0] == '01':
@@ -217,7 +219,7 @@ class DirectionIdentifier:
             elif dirRight[-1] == '10':
                 dirs.add(dir.SO)
         
-            if dirRight[-1] and dirRight[0] == '01':
+            if dirRight[-1] == '01' and dirRight[0] == '01':
                 if dirRight[len(dirRight)//2] == '11':
                     dirs.add(dir.S)
         if dirLeft:
@@ -235,7 +237,7 @@ class DirectionIdentifier:
             elif dirLeft[-1] == '10':
                 dirs.add(dir.NE)
 
-            if dirLeft[-1] and dirLeft[0] == '10':
+            if dirLeft[-1] == '10' and dirLeft[0] == '10':
                if dirLeft[len(dirLeft)//2] == '11':
                     dirs.add(dir.N) 
 
@@ -278,6 +280,9 @@ class Intersection:
 MAX_SPEED = 0.15
 MIN_SPEED = -0.15
 OUTSIDE_LINE = -1 
+MAP_ROWS = 21
+MAP_COLS = 49 
+MAP_CENTER = (MAP_ROWS//2 + 1, MAP_COLS//2 + 1)
 class MyRob(CRobLinkAngs):
     def __init__(self, rob_name, rob_id, angles, host, max_speed=MAX_SPEED, min_speed=MIN_SPEED):
         CRobLinkAngs.__init__(self, rob_name, rob_id, angles, host)
@@ -293,6 +298,9 @@ class MyRob(CRobLinkAngs):
         # map
         self.map = {}
         self.openNodes = []
+        self.filename = 'mapping.out'
+        self.charMap = [[' ' for cols in range(MAP_COLS)] for rows in range(MAP_ROWS)]
+
 
     # In this map the center of cell (i,j), (i in 0..6, j in 0..13) is mapped to labMap[i*2][j*2].
     # to know if there is a wall on top of cell(i,j) (i in 0..5), check if the value of labMap[i*2+1][j*2] is space or not
@@ -327,7 +335,6 @@ class MyRob(CRobLinkAngs):
         self.gpsController = PIDController(GKP, GKI, GKD)
         self.compassController = PIDController(CKP, CKI, CKD)
         self.lineController = PIDController(LKP, LKI, LKD)
-            
 
         while True:
             self.readSensors()
@@ -382,14 +389,52 @@ class MyRob(CRobLinkAngs):
             return  (self.gpsFilter.x + 2, self.gpsFilter.y)
         elif orientation == dir.O or orientation == - dir.O:
             return (self.gpsFilter.x - 2, self.gpsFilter.y) 
-         
+        
+    
+    def setCharMap(self, inter, dirs):
+        # convert intersection xy coord to ij coord
+        i, j = MAP_CENTER
+        dx, dy = inter
+        irow, icol = (i-dy, j+dx)
+
+        # get char position and value for every possible path
+        for ang in dirs:
+            d = dir.fromAngle(ang)
+            
+            row, col = irow, icol
+            if d == dir.NE:
+                row, col = irow-1, icol+1
+            elif d == dir.N:
+                row = irow-1
+            elif d == dir.NO:
+                row, col = irow-1, icol-1
+            elif d == dir.SE:
+                row, col = irow+1, icol+1
+            elif d  == dir.S:
+                row = irow+1
+            elif d == dir.SO:
+                row, col = irow+1, icol-1
+            elif d == dir.L:
+                col = icol+1
+            elif d == dir.O:
+                col = icol-1
+            
+            # set char map
+            self.charMap[row][col] = dir.chars[d]
+
+    
+    def writeCharMap(self):
+        with open(self.filename, 'w') as mapFile:
+            for row in self.charMap:
+                mapFile.write(''.join(row)+'\n')
+
         
     def setState(self):
         if self.state == "init":
             # debug
-            print("Found Left: ", self.identifier.foundLeft)
-            print("Found Right: ", self.identifier.foundRight)
-            print("Found Center: ", self.identifier.foundCenter)
+            # print("Found Left: ", self.identifier.foundLeft)
+            # print("Found Right: ", self.identifier.foundRight)
+            # print("Found Center: ", self.identifier.foundCenter)
 
             # init turn variables
             # identify possible turns
@@ -397,24 +442,36 @@ class MyRob(CRobLinkAngs):
             # get global dirs for the map
             self.globalDirs = [dir.fromRelative(self.orientation, relDir) for relDir in self.relDirs]
             
-            print("Orientation: ", dir.directions[self.orientation])
-            print("Dirs: ", list(map(lambda rel: dir.directions[rel], self.relDirs)))
+            # print("Orientation: ", dir.directions[self.orientation])
+            # print("Dirs: ", list(map(lambda rel: dir.directions[rel], self.relDirs)))
 
+            # save initial intersection to the map
             inter = (int(self.gpsFilter.x), int(self.gpsFilter.y))
             self.map[inter] = Intersection(self.globalDirs)
-            
+
+            # init char map
+            i, j = MAP_CENTER
+            dx, dy = inter
+            row, col = (i-dy, j+dx)
+            self.charMap[row][col] = 'I'
+            # update char map
+            self.setCharMap(inter, self.globalDirs)
+            # update map file
+            self.writeCharMap()
+
+            # expand intersection node
             for path in self.map[inter].paths:
                 node = (inter, path)
                 self.openNodes.append(node)
             
-            print("Open Nodes:", self.openNodes)
+            # print("Open Nodes:", self.openNodes)
 
             # decide which turn to take
             inter, path = self.openNodes.pop(0)
             self.turn = dir.fromAngle(dir.fromGlobal(self.orientation, dir.fromAngle(path.dir)))
 
-            print("Turn: ", dir.directions[self.turn])
-            print("Map", self.map)
+            # print("Turn: ", dir.directions[self.turn])
+            # print("Map", self.map)
 
             # change to next state
             self.state = "turn"
@@ -431,9 +488,9 @@ class MyRob(CRobLinkAngs):
             stable = 5
             if self.transition == stable:
                 # debug
-                print("Found Left: ", self.identifier.foundLeft)
-                print("Found Right: ", self.identifier.foundRight)
-                print("Found Center: ", self.identifier.foundCenter)
+                # print("Found Left: ", self.identifier.foundLeft)
+                # print("Found Right: ", self.identifier.foundRight)
+                # print("Found Center: ", self.identifier.foundCenter)
 
                 # init turn variables
                 # identify possible turns
@@ -442,9 +499,12 @@ class MyRob(CRobLinkAngs):
                 self.relDirs.append(dir.O)
                 # get global dirs for the map
                 self.globalDirs = [dir.fromRelative(self.orientation, relDir) for relDir in self.relDirs]
-                
-                # save new intersection
+                # update char map
                 inter = (int(self.gpsFilter.x), int(self.gpsFilter.y))
+                self.setCharMap(inter, self.globalDirs[:-1])
+                self.writeCharMap()
+
+                # save new intersection to the search map
                 if not (inter in self.map):
                     self.map[inter] = Intersection(self.globalDirs)
 
@@ -468,22 +528,23 @@ class MyRob(CRobLinkAngs):
                             if remove:
                                 self.openNodes.pop(remove)
 
-
                     self.openNodes[:0] = newNodes
             
-                print("Open Nodes:", self.openNodes)
+                # print("Open Nodes:", self.openNodes)
 
                 # decide which turn to take
                 inter, path = self.openNodes.pop(0)
                 self.turn = dir.fromAngle(dir.fromGlobal(self.orientation, dir.fromAngle(path.dir)))
 
-                print("Orientation: ", dir.directions[self.orientation])
-                print("Dirs: ", list(map(lambda rel: dir.directions[rel], self.relDirs)))
-                print("Node: ", (inter, path))
-                print("Turn: ", dir.directions[self.turn])
+                # print("Orientation: ", dir.directions[self.orientation])
+                # print("Dirs: ", list(map(lambda rel: dir.directions[rel], self.relDirs)))
+                # print("Node: ", (inter, path))
+                # print("Turn: ", dir.directions[self.turn])
                 
                 # show map
                 print(self.map)
+                for row in self.charMap:
+                    print(''.join(row))
 
                 # change to next state
                 self.state = "turn"
@@ -508,10 +569,10 @@ class MyRob(CRobLinkAngs):
                 # init go variables
                 self.orientation = dir.fromAngle(self.measures.compass)
                 self.turn = 0
-                print(self.orientation)
+                
                 self.target = self.getTarget(self.orientation)
 
-                print("Next Target: ", self.target)
+                # print("Next Target: ", self.target)
 
                 # change to next state
                 self.state = "go"
@@ -575,7 +636,7 @@ class MyRob(CRobLinkAngs):
 
         if dAng < 0:
             pidCompass = - pidCompass
-        
+
         # Compute the powers of the motors
         self.lPow = round(pidSpeed - pidCompass, 2)
         self.rPow = round(pidSpeed + pidCompass, 2)
@@ -594,16 +655,16 @@ class MyRob(CRobLinkAngs):
         coloredLineSensor = bcolors.color(self.lineSensorRead)
         coloredLineSensorFiltered = bcolors.color(self.lineSensorFilteredRead)
 
-        print(
-            '{} {:4s} coord: {:4.2f} {:4.2f} dist: {:4.2f} error: {:5.2f} p: {:5.2f} i: {:5.2f} angle: {:3.0f} error: {:5.2f} p: {:5.2f} i: {:5.2f} d: {:5.2f} line: {:3.1f} error: {:3.1f} p: {:5.2f} motors: {:5.2f} {:5.2f}'
-                .format(
-                    coloredLineSensorFiltered, self.state.upper(),
-                    self.gpsFilter.x, self.gpsFilter.y, self.dist, self.posError, self.gpsController.p, self.gpsController.i,
-                    self.measures.compass, self.angError, self.compassController.p, self.compassController.i, self.compassController.d,
-                    linePos, self.lineError, self.lineController.p,
-                    self.lPow, self.rPow
-                )
-        )
+        # print(
+        #     '{} {:4s} coord: {:4.2f} {:4.2f} dist: {:4.2f} error: {:5.2f} p: {:5.2f} i: {:5.2f} angle: {:3.0f} error: {:5.2f} p: {:5.2f} i: {:5.2f} d: {:5.2f} line: {:3.1f} error: {:3.1f} p: {:5.2f} motors: {:5.2f} {:5.2f}'
+        #         .format(
+        #             coloredLineSensorFiltered, self.state.upper(),
+        #             self.gpsFilter.x, self.gpsFilter.y, self.dist, self.posError, self.gpsController.p, self.gpsController.i,
+        #             self.measures.compass, self.angError, self.compassController.p, self.compassController.i, self.compassController.d,
+        #             linePos, self.lineError, self.lineController.p,
+        #             self.lPow, self.rPow
+        #         )
+        # )
 
         # change state
         self.setState()

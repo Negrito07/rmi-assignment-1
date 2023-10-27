@@ -41,7 +41,7 @@ case $challenge in
     2)
         # how to call agent for challenge 2
         python3 c2Rob.py -h "$host" -p "$pos" -r "$robname"
-        # mv your_mapfile $outfile.map             # if needed
+        mv mapping.out $outfile.map             # if needed
         ;;
     3)
         # how to call agent for challenge 3
