@@ -57,9 +57,9 @@ CKP = 0.005
 CKI = 0.0
 CKD = 0.003
 
-LKP = 0.01
+LKP = 0.02
 LKI = 0.0
-LKD = 0.0
+LKD = 0.01
 class PIDController:
     def __init__(self, kp, ki, kd):
         self.kp = kp
@@ -99,7 +99,7 @@ class GPSFilter:
         self.y = self.init_y
 
     def update(self,x,y):
-        self.x = round(x-self.init_x, 2)
+        self.x = round(x - self.init_x, 2)
         self.y = round(y - self.init_y, 2)
 
 # Orientation
@@ -448,15 +448,28 @@ class MyRob(CRobLinkAngs):
                 if not (inter in self.map):
                     self.map[inter] = Intersection(self.globalDirs)
 
-                # expand nodes
-                newNodes = []
-                for path in self.map[inter].paths:
-                    node = (inter, path)
-                    target = self.getTarget(dir.fromAngle(path.dir))
-                    print(target)
-                    if not (target in self.map):
-                        newNodes.append(node)
-                self.openNodes[:0] = newNodes
+                    # expand nodes
+                    newNodes = []
+                    for path in self.map[inter].paths:
+                        node = (inter, path)
+                        target = self.getTarget(dir.fromAngle(path.dir))
+                        print(target, path.dir)
+                        # only consider the return path and path to unvisited intersection
+                        if dir.fromGlobal(self.orientation, dir.fromAngle(path.dir)) == dir.directions[dir.O] or not (target in self.map):
+                            newNodes.append(node)
+                        else:
+                            # found a visited intersection from another path, remove itself from openNodes
+                            remove = None
+                            i = 0
+                            for tInter, tPath in self.openNodes:
+                                if tInter == target and dir.fromRelative(dir.fromAngle(tPath.dir), dir.O) == path.dir:
+                                    remove = i
+                                i = i+1
+                            if remove:
+                                self.openNodes.pop(remove)
+
+
+                    self.openNodes[:0] = newNodes
             
                 print("Open Nodes:", self.openNodes)
 
