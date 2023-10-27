@@ -111,6 +111,10 @@ class dir:
         base = (orientation + relative) % len(dir.directions)
         return dir.directions[base]
     
+    def fromGlobal(orientation, glob):
+        base = (glob - orientation) % len(dir.directions)
+        return dir.directions[base]
+    
     def fromAngle(angle):
         direction = int(angle) // 45
         return direction
@@ -195,8 +199,8 @@ class DirectionIdentifier:
         dirRight.extend(list(map(lambda sc: ''.join(sc.seq), filter(lambda sc: sc.counter >= 2,self.foundRight))))
         dirLeft.extend(list(map(lambda sc: ''.join(sc.seq), filter(lambda sc: sc.counter >= 2,self.foundLeft))))
         center.extend(list(map(lambda sc: ''.join(sc.seq), filter(lambda sc: sc.counter >= 2,self.foundCenter))))
-        # print(f'dirRight: {dirRight}')
-        # print(f'dirLeft: {dirLeft}')
+        print(f'dirRight: {dirRight}')
+        print(f'dirLeft: {dirLeft}')
         
         if dirRight:
             if dirRight[0] == '01':
@@ -264,6 +268,7 @@ class Path:
 class Intersection:
     def __init__(self, dirs):
         self.paths = [Path(dir) for dir in dirs]
+        self.visited = True
     
     def __repr__(self):
         return 'I('+repr(self.paths)+')'
@@ -280,13 +285,14 @@ class MyRob(CRobLinkAngs):
         self.minSpeed = min_speed
         self.outside = False
         # states
-        self.state = "ident"
+        self.state = "init"
         self.transition = 0
         # IDENT
         self.identifier = DirectionIdentifier()
         self.dirs = []
         # map
         self.map = {}
+        self.openNodes = []
 
     # In this map the center of cell (i,j), (i in 0..6, j in 0..13) is mapped to labMap[i*2][j*2].
     # to know if there is a wall on top of cell(i,j) (i in 0..5), check if the value of labMap[i*2+1][j*2] is space or not
@@ -359,26 +365,62 @@ class MyRob(CRobLinkAngs):
                 #self.wander()
                 self.drive()
 
-    def getTarget(self):
-        if self.orientation == dir.NE:
-            self.target = (self.gpsFilter.x + 2, self.gpsFilter.y + 2)
-        elif self.orientation == dir.N:
-            self.target = (self.gpsFilter.x, self.gpsFilter.y + 2)
-        elif self.orientation == dir.NO:
-            self.target = (self.gpsFilter.x - 2, self.gpsFilter.y + 2)
-        elif self.orientation == dir.SE:
-            self.target = (self.gpsFilter.x + 2, self.gpsFilter.y - 2)
-        elif self.orientation  == dir.S:
-            self.target = (self.gpsFilter.x, self.gpsFilter.y - 2)
-        elif self.orientation == dir.SO:
-            self.target = (self.gpsFilter.x-2, self.gpsFilter.y - 2)
-        elif self.orientation == dir.L:
-            self.target = (self.gpsFilter.x + 2, self.gpsFilter.y)
-        elif self.orientation == dir.O or self.orientation == - dir.O:
-            self.target = (self.gpsFilter.x - 2, self.gpsFilter.y)      
+    def getTarget(self, orientation):
+        if orientation == dir.NE:
+           return (self.gpsFilter.x + 2, self.gpsFilter.y + 2)
+        elif orientation == dir.N:
+            return (self.gpsFilter.x, self.gpsFilter.y + 2)
+        elif orientation == dir.NO:
+            return (self.gpsFilter.x - 2, self.gpsFilter.y + 2)
+        elif orientation == dir.SE:
+            return  (self.gpsFilter.x + 2, self.gpsFilter.y - 2)
+        elif orientation  == dir.S:
+            return (self.gpsFilter.x, self.gpsFilter.y - 2)
+        elif orientation == dir.SO:
+            return (self.gpsFilter.x-2, self.gpsFilter.y - 2)
+        elif orientation == dir.L:
+            return  (self.gpsFilter.x + 2, self.gpsFilter.y)
+        elif orientation == dir.O or orientation == - dir.O:
+            return (self.gpsFilter.x - 2, self.gpsFilter.y) 
+         
         
     def setState(self):
-        if self.state == "ident":
+        if self.state == "init":
+            # debug
+            print("Found Left: ", self.identifier.foundLeft)
+            print("Found Right: ", self.identifier.foundRight)
+            print("Found Center: ", self.identifier.foundCenter)
+
+            # init turn variables
+            # identify possible turns
+            self.relDirs = self.identifier.getDirs()
+            # get global dirs for the map
+            self.globalDirs = [dir.fromRelative(self.orientation, relDir) for relDir in self.relDirs]
+            
+            print("Orientation: ", dir.directions[self.orientation])
+            print("Dirs: ", list(map(lambda rel: dir.directions[rel], self.relDirs)))
+
+            inter = (int(self.gpsFilter.x), int(self.gpsFilter.y))
+            self.map[inter] = Intersection(self.globalDirs)
+            
+            for path in self.map[inter].paths:
+                node = (inter, path)
+                self.openNodes.append(node)
+            
+            print("Open Nodes:", self.openNodes)
+
+            # decide which turn to take
+            inter, path = self.openNodes.pop(0)
+            self.turn = dir.fromAngle(dir.fromGlobal(self.orientation, dir.fromAngle(path.dir)))
+
+            print("Turn: ", dir.directions[self.turn])
+            print("Map", self.map)
+
+            # change to next state
+            self.state = "turn"
+            self.transition = 0
+            self.first = True
+        elif self.state == "ident":
             # count transition condition
             if self.posError == 0:
                 self.transition = self.transition + 1
@@ -401,16 +443,30 @@ class MyRob(CRobLinkAngs):
                 # get global dirs for the map
                 self.globalDirs = [dir.fromRelative(self.orientation, relDir) for relDir in self.relDirs]
                 
+                # save new intersection
                 inter = (int(self.gpsFilter.x), int(self.gpsFilter.y))
                 if not (inter in self.map):
                     self.map[inter] = Intersection(self.globalDirs)
 
+                # expand nodes
+                newNodes = []
+                for path in self.map[inter].paths:
+                    node = (inter, path)
+                    target = self.getTarget(dir.fromAngle(path.dir))
+                    print(target)
+                    if not (target in self.map):
+                        newNodes.append(node)
+                self.openNodes[:0] = newNodes
+            
+                print("Open Nodes:", self.openNodes)
 
                 # decide which turn to take
-                self.turn = self.relDirs[0]
+                inter, path = self.openNodes.pop(0)
+                self.turn = dir.fromAngle(dir.fromGlobal(self.orientation, dir.fromAngle(path.dir)))
 
                 print("Orientation: ", dir.directions[self.orientation])
                 print("Dirs: ", list(map(lambda rel: dir.directions[rel], self.relDirs)))
+                print("Node: ", (inter, path))
                 print("Turn: ", dir.directions[self.turn])
                 
                 # show map
@@ -440,7 +496,7 @@ class MyRob(CRobLinkAngs):
                 self.orientation = dir.fromAngle(self.measures.compass)
                 self.turn = 0
                 print(self.orientation)
-                self.getTarget()
+                self.target = self.getTarget(self.orientation)
 
                 print("Next Target: ", self.target)
 
@@ -498,9 +554,6 @@ class MyRob(CRobLinkAngs):
             linePos = 1
         self.lineError = 1 - linePos
         
-        # change state
-        self.setState()
-
         # process state
         # Get the PID control
         pidSpeed = self.gpsController.getPID(self.posError)
@@ -510,15 +563,17 @@ class MyRob(CRobLinkAngs):
         if dAng < 0:
             pidCompass = - pidCompass
         
-        pidTurn = pidCompass
-        if self.state == "ident":
+        # Compute the powers of the motors
+        self.lPow = round(pidSpeed - pidCompass, 2)
+        self.rPow = round(pidSpeed + pidCompass, 2)
+
+        if self.state == "ident" or self.state=="init":
             self.identifier.push(self.lineSensorFilteredRead)
         elif self.state == "go":
-            pidTurn = pidCompass + pidLine
+            # Compute the powers of the motors
+            self.lPow = round(pidSpeed - pidLine, 2)
+            self.rPow = round(pidSpeed + pidLine, 2)
 
-        # Compute the powers of the motors
-        self.lPow = round(pidSpeed - pidTurn, 2)
-        self.rPow = round(pidSpeed + pidTurn, 2)
         # Send drive command
         self.driveMotors(self.lPow, self.rPow)
 
@@ -537,6 +592,8 @@ class MyRob(CRobLinkAngs):
                 )
         )
 
+        # change state
+        self.setState()
         
 
     def wander(self):
