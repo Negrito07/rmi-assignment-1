@@ -20,6 +20,34 @@ class bcolors:
             lambda val: bcolors.RED+val+bcolors.ENDC if val == '0' else bcolors.GREEN+val+bcolors.ENDC, lineSensorSeq)
         )
 
+# Filter
+FILTER_SIZE = 3
+class LineSensorFilter():
+    def __init__(self, size, first):
+      # size of the buffer
+      self.size = size
+      # circular buffer (init copies the first value to all buffer entries)
+      self.buffer = [first for i in range(size)]
+      # reference to the oldest buffer position
+      self.last = 0
+    
+
+    """ Updates the buffer with a lineSensorRead. """
+    def update(self, lineSensorRead):
+        self.buffer[self.last] = lineSensorRead
+        self.last = (self.last+1) % self.size
+
+    """ Returns a filtered lineSensorRead as the average of the last 'size' updates."""
+    def read(self):
+        filtered = []
+        for sensor in range(7):
+            total = ""
+            for read in self.buffer:
+                total += read[sensor] 
+            filtered.append(str(total.count('1') // ((self.size // 2) + 1)))
+        #print(self.buffer, "buffer", sep=" <-> ")
+        return filtered
+    
 # PID
 PKP = 0.1
 PKI = 0.0
@@ -61,7 +89,7 @@ class PIDController:
         self.lastError = startError
         self.accumError = startError
 
-# DEBUG
+# Displacement
 class GPSFilter:
     def __init__(self,x,y):
         self.init_x = x
@@ -70,8 +98,8 @@ class GPSFilter:
         self.y = self.init_y
 
     def update(self,x,y):
-        self.x = x - self.init_x
-        self.y = y - self.init_y
+        self.x = round(x - self.init_x, 2)
+        self.y = round(y - self.init_y, 2)
 
 
 # Orientation
@@ -91,8 +119,32 @@ class dir:
     def fromAngle(angle):
         direction = int(angle) // 45
         return direction
+    
 
-# Identifier
+
+class curv:
+    cl_135 = '0001111000'
+    cr_135 = '0010110100'
+
+    cl_45 = cr_135
+    cr_45 = cl_135
+
+    cl_90 = '001100'
+    cr_90 = cl_90
+
+    cl_90_135 = '00111000'
+    cr_90_135 = '00110100'
+
+    cl_45_90 = '00101100'
+    cr_45_90 = '00011100'
+
+    cl_45_135 = '001011010001111000'
+    cr_45_135 = '00011110110100'
+
+    cl_45_90_135 = '0010111000'
+    cr_45_90_135 = '0001110100'
+
+
 class SequenceCounter:
     def __init__(self, seq):
         self.seq = seq
@@ -282,6 +334,8 @@ class MyRob(CRobLinkAngs):
 
         # make initial sensor read
         self.readSensors()
+        # init line sensor filter
+        self.lineSensorFilter = LineSensorFilter(FILTER_SIZE, self.measures.lineSensor)
         # init orientation
         self.orientation = dir.fromAngle(self.measures.compass)
         self.turn = self.orientation
@@ -331,6 +385,9 @@ class MyRob(CRobLinkAngs):
 
     
     def driveMotorsExt(self, lPow, rPow):
+        # send driveMotors
+        self.driveMotors(lPow, rPow)
+        
         # apply movement model
         outL = (lPow + self.lPow) / 2
         outR = (rPow + self.rPow) / 2
@@ -346,8 +403,7 @@ class MyRob(CRobLinkAngs):
 
         rot = (outL - outR)*180 / pi
         self.ang = self.ang + rot
-        # send driveMotors
-        self.driveMotors(lPow, rPow)
+        
 
     def getTarget(self, orientation):
         if orientation == dir.NE:
@@ -454,24 +510,10 @@ class MyRob(CRobLinkAngs):
             self.state = "turn"
             self.transition = 0
             self.first = True
-        elif self.state == "scan":
+        elif self.state == "ident":
             # count transition condition
             if self.Dx == 0 and self.Dy == 0:
                 self.transition = self.transition + 1
-            else:
-                self.transition = 0
-            
-            # let transition condition stabilize
-            stable = 1
-            if self.transition == stable:
-                # change to next state
-                self.state = "ident"
-                self.transition = 0
-                self.first = True
-        elif self.state == "ident":
-            # count transition condition
-            if self.lineSensorFilteredRead[:2] == ['0', '0'] and self.lineSensorFilteredRead[5:] == ['0', '0']:
-                    self.transition = self.transition + 1
             else:
                 self.transition = 0
             
@@ -482,12 +524,6 @@ class MyRob(CRobLinkAngs):
                 # print("Found Left: ", self.identifier.foundLeft)
                 # print("Found Right: ", self.identifier.foundRight)
                 # print("Found Center: ", self.identifier.foundCenter)
-                # correct intersection coordinates
-                x, y = self.target
-                self.x = x
-                self.y = y
-                self.roundX = round(x, 1)
-                self.roundY = round(y, 1)
 
                 # init turn variables
                 # identify possible turns
@@ -544,6 +580,24 @@ class MyRob(CRobLinkAngs):
                     print(''.join(row))
 
                 # change to next state
+                self.state = "verify"
+                self.transition = 0
+                self.first = True
+        elif self.state == "verify":
+            # count transition condition
+            if self.lineSensorRead[:2] == ['0', '0'] or self.lineSensorRead[2:5] == ['0', '0', '0'] or self.lineSensorRead[5:] == ['0', '0']:
+                self.transition = self.transition + 1
+            else:
+                self.transition = 0
+            
+            # let transition condition stabilize
+            stable = 1
+            if self.transition == stable:
+                x, y = self.target
+                self.x = x
+                self.y = y
+
+                # change to next state
                 self.state = "turn"
                 self.transition = 0
                 self.first = True
@@ -585,14 +639,18 @@ class MyRob(CRobLinkAngs):
             if self.posError <= 0.85:
                 # init ident variables
                 self.identifier.reset()
-                # change to scan state
-                self.state = "scan"
+                # change to ident state
+                self.state = "ident"
 
 
     def drive(self):
         # sense
+        # Get the line sensor read
+        self.lineSensorRead = self.measures.lineSensor
+        # Send it to the filter
+        self.lineSensorFilter.update(self.lineSensorRead)
         # Get the filtered line sensor read
-        self.lineSensorFilteredRead = self.measures.lineSensor  # as str
+        self.lineSensorFilteredRead = self.lineSensorFilter.read()  # as str
         self.lineSensorFilteredReadNum = list(map(int, self.lineSensorFilteredRead))   # as int
         # TODO: compass filter
         # Get the compass read
@@ -609,9 +667,19 @@ class MyRob(CRobLinkAngs):
         # print(nextX, nextY, self.roundX, self.roundY)
         # self.dist = round(sqrt(pow(self.Dx, 2) + pow(self.Dy, 2)), 2)
         # self.posError = self.dist
-        # update dx, dy
-        self.Dx = nextX - self.roundX
-        self.Dy = nextY - self.roundY
+        if self.Dx != 0 or (self.Dx * self.lastDx) >= 0:
+            self.Dx = nextX - self.roundX
+            self.Dy = nextY - self.roundY
+
+            # verify target was surpassed
+            if self.Dx == 0 or (self.Dx * self.lastDx) < 0:
+                self.Dx = 0
+            if self.Dy == 0 or (self.Dy * self.lastDy) < 0:
+                self.Dy = 0
+
+        # update last dx, dy
+        self.lastDx = self.Dx
+        self.lastDy = self.Dy
 
         # calc distance error
         absDx, absDy = abs(self.Dx), abs(self.Dy)
@@ -629,71 +697,94 @@ class MyRob(CRobLinkAngs):
         if self.angError > 180:
             self.angError = 360 - self.angError
             dAng = - dAng
-        # calc center line error
-        center = self.lineSensorFilteredReadNum[2:5]
-        ones = center.count(1)
-        l0, c, r0 = center
-        if ones:
-            linePos = ((l0*0) + (c*1) + (r0*2)) / ones
-        else:
-            linePos = 1
-        self.lineError = 1 - linePos
+        # # calc center line error
+        # center = self.lineSensorFilteredReadNum[2:5]
+        # ones = center.count(1)
+        # l0, c, r0 = center
+        # if ones:
+        #     linePos = ((l0*0) + (c*1) + (r0*2)) / ones
+        # else:
+        #     linePos = 1
+        # self.lineError = 1 - linePos
         
+        # process state
+        baseSpeed = 0
         # Get the PID control
         pidSpeed = self.positionController.getPID(self.posError)
         pidCompass = self.compassController.getPID(self.angError)
-        pidLine = self.lineController.getPID(self.lineError)
+        # pidLine = self.lineController.getPID(self.lineError)
 
         if dAng < 0:
             pidCompass = - pidCompass
 
-        if self.state=="init" or self.state == "scan" or self.state == "ident":
+        # Compute the powers of the motors
+        lPow = round((baseSpeed + pidSpeed) - pidCompass, 2)
+        rPow = round((baseSpeed + pidSpeed) + pidCompass, 2)
+
+        if self.state=="init" or self.state == "ident" or self.state == "verify":
             self.identifier.push(self.lineSensorFilteredRead)
-        if self.state == "ident":
-            baseSpeed = 0.01
-            # Compute the powers of the motors
-            lPow = round((baseSpeed + pidSpeed) - pidCompass, 2)
-            rPow = round((baseSpeed + pidSpeed) + pidCompass, 2)
-        elif self.state == "go":
-            # Compute the powers of the motors
-            lPow = round(pidSpeed - pidLine, 2)
-            rPow = round(pidSpeed + pidLine, 2)
-        else:
-            # Compute the powers of the motors
-            lPow = round(pidSpeed - pidCompass, 2)
-            rPow = round(pidSpeed + pidCompass, 2)
+        if self.state == "verify":
+            baseSpeed = 0.0
 
         # normalize powers
         if lPow > 0.15:
             lPow = 0.15
-        elif lPow < -0.15:
-            lPow = -0.15
         if rPow > 0.15:
             rPow = 0.15
-        elif rPow < -0.15:
-            rPow = -0.15
 
         # keep last motor powers
         self.lPow = lPow
         self.rPow = rPow
 
         # debug
+        coloredLineSensor = bcolors.color(self.lineSensorRead)
         coloredLineSensorFiltered = bcolors.color(self.lineSensorFilteredRead)
+
+        # print(
+        #     '{} {:4s} coord: {:4.2f} {:4.2f} dX: {:4.2f} dY: {:4.2f} error: {:5.2f} p: {:5.2f} i: {:5.2f} angle: {:3.0f} error: {:5.2f} p: {:5.2f} i: {:5.2f} d: {:5.2f} motors: {:5.2f} {:5.2f}'
+        #         .format(
+        #             coloredLineSensorFiltered, self.state.upper(),
+        #             self.x, self.y, self.Dx, self.Dy, self.posError, self.positionController.p, self.positionController.i,
+        #             self.measures.compass, self.angError, self.compassController.p, self.compassController.i, self.compassController.d,
+        #             self.lPow, self.rPow
+        #         )
+        # )
         print(
-            '{} {:4s} coord: {:4.2f} {:4.2f} gps: {:4.2f} {:4.2f} orientation: {:2d} turn: {:2d} target: {:4.2f} {:4.2f} dX: {:4.2f} dY: {:4.2f} error: {:5.2f} p: {:5.2f} i: {:5.2f} motors: {:5.2f} {:5.2f}'
+            '{} {:4s} coord: {:4.2f} {:4.2f} gps: {:4.2f} {:4.2f} target: {:4.2f} {:4.2f} dX: {:4.2f} dY: {:4.2f} error: {:5.2f} p: {:5.2f} i: {:5.2f} motors: {:5.2f} {:5.2f}'
                 .format(
                     coloredLineSensorFiltered, self.state.upper(),
-                    self.roundX, self.roundY, self.gps.x, self.gps.y, dir.directions[self.orientation], dir.directions[self.turn], self.target[0], self.target[1],
+                    self.roundX, self.roundY, self.gps.x, self.gps.y, self.target[0], self.target[1],
                     self.Dx, self.Dy, self.posError, self.positionController.p, self.positionController.i,
                     self.lPow, self.rPow
                 )
         )
 
-        # Change state
-        self.setState()
         # Send drive command
         self.driveMotorsExt(lPow, rPow)
+        # change state
+        self.setState()
         
+
+    def wander(self):
+        center_id = 0
+        left_id = 1
+        right_id = 2
+        back_id = 3
+        if    self.measures.irSensor[center_id] > 5.0\
+           or self.measures.irSensor[left_id]   > 5.0\
+           or self.measures.irSensor[right_id]  > 5.0\
+           or self.measures.irSensor[back_id]   > 5.0:
+            print('Rotate left')
+            self.driveMotors(-0.1,+0.1)
+        elif self.measures.irSensor[left_id]> 2.7:
+            print('Rotate slowly right')
+            self.driveMotors(0.1,0.0)
+        elif self.measures.irSensor[right_id]> 2.7:
+            print('Rotate slowly left')
+            self.driveMotors(0.0,0.1)
+        else:
+            print('Go')
+            self.driveMotors(0.1,0.1)
 
 class Map():
     def __init__(self, filename):

@@ -655,16 +655,16 @@ class MyRob(CRobLinkAngs):
         coloredLineSensor = bcolors.color(self.lineSensorRead)
         coloredLineSensorFiltered = bcolors.color(self.lineSensorFilteredRead)
 
-        # print(
-        #     '{} {:4s} coord: {:4.2f} {:4.2f} dist: {:4.2f} error: {:5.2f} p: {:5.2f} i: {:5.2f} angle: {:3.0f} error: {:5.2f} p: {:5.2f} i: {:5.2f} d: {:5.2f} line: {:3.1f} error: {:3.1f} p: {:5.2f} motors: {:5.2f} {:5.2f}'
-        #         .format(
-        #             coloredLineSensorFiltered, self.state.upper(),
-        #             self.gpsFilter.x, self.gpsFilter.y, self.dist, self.posError, self.gpsController.p, self.gpsController.i,
-        #             self.measures.compass, self.angError, self.compassController.p, self.compassController.i, self.compassController.d,
-        #             linePos, self.lineError, self.lineController.p,
-        #             self.lPow, self.rPow
-        #         )
-        # )
+        print(
+            '{} {:4s} coord: {:4.2f} {:4.2f} dist: {:4.2f} error: {:5.2f} p: {:5.2f} i: {:5.2f} angle: {:3.0f} error: {:5.2f} p: {:5.2f} i: {:5.2f} d: {:5.2f} line: {:3.1f} error: {:3.1f} p: {:5.2f} motors: {:5.2f} {:5.2f}'
+                .format(
+                    coloredLineSensorFiltered, self.state.upper(),
+                    self.gpsFilter.x, self.gpsFilter.y, self.dist, self.posError, self.gpsController.p, self.gpsController.i,
+                    self.measures.compass, self.angError, self.compassController.p, self.compassController.i, self.compassController.d,
+                    linePos, self.lineError, self.lineController.p,
+                    self.lPow, self.rPow
+                )
+        )
 
         # change state
         self.setState()
