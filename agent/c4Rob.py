@@ -9,7 +9,7 @@ import csv
 CELLROWS=7
 CELLCOLS=14
 
-# debug
+# DEBUG
 class bcolors:
     RED = '\033[31m'
     GREEN = '\033[32m'
@@ -19,6 +19,17 @@ class bcolors:
         return ''.join(map(
             lambda val: bcolors.RED+val+bcolors.ENDC if val == '0' else bcolors.GREEN+val+bcolors.ENDC, lineSensorSeq)
         )
+    
+class GPSFilter:
+    def __init__(self,x,y):
+        self.init_x = x
+        self.init_y = y
+        self.x = self.init_x
+        self.y = self.init_y
+
+    def update(self,x,y):
+        self.x = x - self.init_x
+        self.y = y - self.init_y
 
 # PID
 PKP = 0.1
@@ -61,17 +72,6 @@ class PIDController:
         self.lastError = startError
         self.accumError = startError
 
-# DEBUG
-class GPSFilter:
-    def __init__(self,x,y):
-        self.init_x = x
-        self.init_y = y
-        self.x = self.init_x
-        self.y = self.init_y
-
-    def update(self,x,y):
-        self.x = x - self.init_x
-        self.y = y - self.init_y
 
 
 # Orientation
@@ -91,6 +91,7 @@ class dir:
     def fromAngle(angle):
         direction = int(angle) // 45
         return direction
+
 
 # Identifier
 class SequenceCounter:
@@ -214,14 +215,190 @@ class Path:
     def __repr__(self):
         return '({}, {})'.format(self.dir, self.visited)
     
+    def __eq__(self, other):
+        if isinstance(other, Path):
+            return self.dir == other.dir
+    
 
 class Intersection:
-    def __init__(self, dirs):
+    def __init__(self, pos, dirs):
+        self.pos = pos
         self.paths = [Path(dir) for dir in dirs]
         self.visited = True
     
     def __repr__(self):
         return 'I('+repr(self.paths)+')'
+    
+    def __eq__(self, other):
+        if isinstance(other, Intersection):
+            return self.pos == other.pos
+    
+
+# Search
+# Dominios de pesquisa
+# Permitem calcular
+# as accoes possiveis em cada estado, etc
+class SearchDomain:
+    def __init__(self, map):
+        self.map = map
+
+    # lista de acoes possiveis num estado
+    def moves(self, state):
+        inter = self.map[state]
+        return [path.dir for path in inter.paths]
+
+    # resultado de uma acao num estado, ou seja, o estado seguinte
+    def result(self, state, action):
+        x, y = state
+        if action == dir.NE:
+           return (x + 2, y + 2)
+        elif action == dir.N:
+            return (x, y + 2)
+        elif action == dir.NO:
+            return (x - 2, y + 2)
+        elif action == dir.SE:
+            return  (x + 2, y - 2)
+        elif action  == dir.S:
+            return (x, y - 2)
+        elif action == dir.SO:
+            return (x - 2, y - 2)
+        elif action == dir.L:
+            return  (x + 2, y)
+        elif action == dir.O or action == - dir.O:
+            return (x - 2, y)
+
+    # custo de uma acao num estado
+    def cost(self, state, action):
+        if action == dir.N or action  == dir.S or action == dir.L or action == dir.O or action == - dir.O:
+            return 2
+        else:
+            return hypot(2, 2)
+        
+    # custo estimado de chegar de um estado a outro
+    def heuristic(self, state, goal):
+        x, y = state
+        x0, y0 = goal
+        return hypot(x-x0, y-y0)
+
+    # test if the given "goal" is satisfied in "state"
+    def satisfies(self, state, goal):
+        state == goal
+
+# Problemas concretos a resolver
+# dentro de um determinado dominio
+class SearchProblem:
+    def __init__(self, domain, initial, goal):
+        self.domain = domain
+        self.initial = initial
+        self.goal = goal
+    def goal_test(self, state):
+        return self.domain.satisfies(state,self.goal)
+    
+# Nos de uma arvore de pesquisa
+class SearchNode:
+    def __init__(self, state, parent, depth, cost, heuristic, action=None): 
+        self.state = state
+        self.parent = parent
+        self.depth = depth
+        self.action = action      # guarda a acao que levou do estado anterior a este estado
+        self.cost = cost          # guarda o custo da acao anterior
+        self.heuristic = heuristic
+        
+    def __str__(self):
+        return "(" + str(self.state) + "," + str(self.cost) + "," + str(self.heuristic) + ")"
+    def __repr__(self):
+        return str(self)
+    # so queremos verificar se o estado é igual
+    def __eq__(self, other):
+        if isinstance(other, SearchNode):
+            return self.state == other.state
+
+    def in_parent(self, newstate):
+        if self.parent == None:
+            return False
+        if self.parent.state == newstate:
+            return True
+        return self.parent.in_parent(newstate)
+    
+# Arvore de pesquisa
+class SearchTree:
+    # construtor
+    def __init__(self, problem): 
+        self.problem = problem
+        root = SearchNode(problem.initial, parent=None, depth=0, cost=0, heuristic=problem.domain.heuristic(problem.initial, problem.goal))
+        self.open_nodes = [root]
+        self.closed_nodes = []
+        self.solution = None
+        self.terminals = 0
+        self.non_terminals = 0
+
+    @property 
+    def length(self):
+        if self.solution == None:
+            return None
+        return self.solution.depth
+
+    @property
+    def avg_branching(self):
+        return ((self.terminals+self.non_terminals)-1)/self.non_terminals
+    
+    # 8) changes: @property returns the solution cost of a tree search
+    @property
+    def cost(self):
+        if not self.solution:
+            return None
+        return self.solution.cost
+    # end of 8)
+
+    # obter o caminho (sequencia de estados) da raiz ate um no
+    def get_path(self,node):
+        if node.parent == None:
+            return [node.state]
+        path = self.get_path(node.parent)
+        path += [node.state]
+        return(path)
+
+    # procurar a solucao
+    def search(self,limit = None):
+        while self.open_nodes != []:
+            node = self.open_nodes.pop(0)
+            self.closed_nodes.append(node)
+            #print(node)          
+            if self.problem.goal_test(node.state):
+                self.solution = node
+                self.terminals = len(self.open_nodes) + 1
+                return self.get_path(node)
+            self.non_terminals += 1 
+            lnewnodes = []
+            union = self.open_nodes + self.closed_nodes
+            for a in self.problem.domain.moves(node.state):
+                newstate = self.problem.domain.result(node.state,a)
+                # 8) changes:
+                # >> reg action cost from node.state to newstate
+                newstate_cost = self.problem.domain.cost(node.state,node.action,a)
+                # end of 8)
+                # 13) changes to support greedy search
+                #  >> calc estimate cost from newstate to goal (heuristic)
+                newstate_heur = self.problem.domain.heuristic(newstate,self.problem.goal)
+                # end of 13)
+                if not node.in_parent(newstate):
+                    newnode = SearchNode(newstate, node, node.depth + 1, node.cost + newstate_cost, newstate_heur, a)
+                    if limit == None or newnode.depth <= limit:
+                        if newnode in union:
+                            oldnode = union[union.index(newnode)]
+                            if newnode.cost < oldnode.cost:
+                                lnewnodes.append(newnode)
+                        else:
+                            lnewnodes.append(newnode)
+
+            self.add_to_open(lnewnodes)
+            
+        return None
+
+# juntar novos nos a lista de nos abertos de acordo com a estrategia A* search
+    def add_to_open(self,lnewnodes):
+        self.open_nodes.extend(lnewnodes)
+        self.open_nodes = sorted(self.open_nodes, key=lambda node: node.heuristic + node.cost)
 
     
 # Rob
@@ -424,7 +601,7 @@ class MyRob(CRobLinkAngs):
 
             # save initial intersection to the map
             inter = (int(self.x), int(self.y))
-            self.map[inter] = Intersection(self.globalDirs)
+            self.map[inter] = Intersection(inter, self.globalDirs)
 
             # init char map
             i, j = MAP_CENTER
@@ -503,7 +680,7 @@ class MyRob(CRobLinkAngs):
 
                 # save new intersection to the search map
                 if not (inter in self.map):
-                    self.map[inter] = Intersection(self.globalDirs)
+                    self.map[inter] = Intersection(inter, self.globalDirs)
 
                     # expand nodes
                     newNodes = []
@@ -680,10 +857,12 @@ class MyRob(CRobLinkAngs):
         # debug
         coloredLineSensorFiltered = bcolors.color(self.lineSensorFilteredRead)
         print(
-            '{} {:4s} coord: {:4.2f} {:4.2f} gps: {:4.2f} {:4.2f} orientation: {:2d} turn: {:2d} target: {:4.2f} {:4.2f} dX: {:4.2f} dY: {:4.2f} error: {:5.2f} p: {:5.2f} i: {:5.2f} motors: {:5.2f} {:5.2f}'
+            '{} {:4s} coord: {:4.2f} {:4.2f} gps: {:4.2f} {:4.2f} orient: {:4d} turn: {:4d} ang: {:4.2f} target: {:4.2f} {:4.2f} dX: {:4.2f} dY: {:4.2f} error: {:5.2f} p: {:5.2f} i: {:5.2f} motors: {:5.2f} {:5.2f}'
                 .format(
                     coloredLineSensorFiltered, self.state.upper(),
-                    self.roundX, self.roundY, self.gps.x, self.gps.y, dir.directions[self.orientation], dir.directions[self.turn], self.target[0], self.target[1],
+                    self.roundX, self.roundY, self.gps.x, self.gps.y,
+                    dir.directions[self.orientation], dir.directions[self.turn], self.ang,
+                    self.target[0], self.target[1],
                     self.Dx, self.Dy, self.posError, self.positionController.p, self.positionController.i,
                     self.lPow, self.rPow
                 )
