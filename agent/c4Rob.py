@@ -436,6 +436,7 @@ class MyRob(CRobLinkAngs):
         self.Dy = 0
         self.lastDx = 0
         self.lastDy = 0
+        self.ang = 0
         # init target
         self.target = (self.x, self.y)
 
@@ -460,7 +461,7 @@ class MyRob(CRobLinkAngs):
         # make initial sensor read
         self.readSensors()
         # init orientation
-        self.orientation = dir.fromAngle(self.measures.compass)
+        self.orientation = dir.fromAngle(self.ang)
         self.turn = self.orientation
         # init PID controllers      
         self.positionController = PIDController(PKP, PKI, PKD)
@@ -522,7 +523,7 @@ class MyRob(CRobLinkAngs):
         self.roundY = round(self.y, 1)
 
         rot = (outL - outR)*180 / pi
-        self.ang = self.ang + rot
+        self.ang = self.ang - rot
         # send driveMotors
         self.driveMotors(lPow, rPow)
 
@@ -653,7 +654,7 @@ class MyRob(CRobLinkAngs):
                 self.transition = 0
             
             # let transition condition stabilize
-            stable = 5
+            stable = 4
             if self.transition == stable:
                 # debug
                 # print("Found Left: ", self.identifier.foundLeft)
@@ -741,7 +742,8 @@ class MyRob(CRobLinkAngs):
             stable = 3
             if self.transition == stable:
                 # init go variables
-                self.orientation = dir.fromAngle(self.measures.compass)
+                ang = round(self.ang)
+                self.orientation = dir.fromAngle(ang)
                 self.turn = 0
                 
                 self.target = self.getTarget(self.orientation)
@@ -777,7 +779,7 @@ class MyRob(CRobLinkAngs):
         # Send it to the filter
         # self.compassReadFiltered = self.compassFilter.update(self.compassRead)
         # Get the filtered compass read
-        self.ang = self.compassRead
+        # self.ang = self.compassRead
         # update gps
         self.gps.update(self.measures.x, self.measures.y)     # DEBUG only
 
@@ -799,7 +801,8 @@ class MyRob(CRobLinkAngs):
 
         
         # calc orientation error
-        dAng = dir.directions[self.turn] - (self.measures.compass - dir.directions[self.orientation])
+        ang = round(self.ang)
+        dAng = dir.directions[self.turn] - (ang - dir.directions[self.orientation])
         # dRad = dAng * pi / 180
         # self.angError = abs(cos(dRad) - 1) * 50
         self.angError = abs(dAng)
@@ -857,11 +860,11 @@ class MyRob(CRobLinkAngs):
         # debug
         coloredLineSensorFiltered = bcolors.color(self.lineSensorFilteredRead)
         print(
-            '{} {:4s} coord: {:4.2f} {:4.2f} gps: {:4.2f} {:4.2f} orient: {:4d} turn: {:4d} ang: {:4.2f} target: {:4.2f} {:4.2f} dX: {:4.2f} dY: {:4.2f} error: {:5.2f} p: {:5.2f} i: {:5.2f} motors: {:5.2f} {:5.2f}'
+            '{} {:4s} coord: {:4.2f} {:4.2f} gps: {:4.2f} {:4.2f} orient: {:4d} turn: {:4d} ang: {:4d} angError: {:4d} target: {:4.2f} {:4.2f} dX: {:4.2f} dY: {:4.2f} posError: {:5.2f} p: {:5.2f} i: {:5.2f} motors: {:5.2f} {:5.2f}'
                 .format(
                     coloredLineSensorFiltered, self.state.upper(),
                     self.roundX, self.roundY, self.gps.x, self.gps.y,
-                    dir.directions[self.orientation], dir.directions[self.turn], self.ang,
+                    dir.directions[self.orientation], dir.directions[self.turn], ang, self.angError,
                     self.target[0], self.target[1],
                     self.Dx, self.Dy, self.posError, self.positionController.p, self.positionController.i,
                     self.lPow, self.rPow
