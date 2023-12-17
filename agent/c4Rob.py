@@ -32,13 +32,17 @@ class GPSFilter:
         self.y = y - self.init_y
 
 # PID
-PKP = 0.1
+PKP = 0.09
 PKI = 0.0
 PKD = 0.0
 
-CKP = 0.005 
+OKP = 0.0015
+OKI = 0.0
+OKD = 0.0005
+
+CKP = 0.0
 CKI = 0.0
-CKD = 0.003
+CKD = 0.0
 
 LKP = 0.02
 LKI = 0.0
@@ -89,8 +93,46 @@ class dir:
         return dir.directions[base]
     
     def fromAngle(angle):
-        direction = int(angle) // 45
+        direction = floor((angle+22.5)/45)
         return direction
+
+
+class CompassFilter:
+    def __init__(self, compass, margin=3, range=5):
+        print(compass, dir.fromAngle(compass))
+        self.base = dir.directions[dir.fromAngle(compass)]
+        self.margin = margin
+        self.range = range
+        self.ang = self.base
+        self.sum = self.ang
+        self.average = self.ang
+        self.n = 1
+        # print("Compass filter initialized with base: ", self.base)
+
+    def update(self, compass):
+        direction = compass - self.base
+        filtered = self.margin * floor((direction + (self.margin/2)) / self.margin)
+    
+        # # blocks with size n avg
+        # self.n = (self.n % self.range) + 1
+        # if(self.n == 1):
+        #     self.sum = direction
+        #     average = self.sum
+        #     print("reset: ", self.sum)
+        # else:
+        #     self.sum = self.sum + direction
+        #     average = floor((self.sum + 0.5)/self.n)
+
+        # cumulative avg - filtering result
+        self.average = (self.average + abs(direction)) / 2
+        self.ang = self.margin * floor((self.average + (self.margin/2)) / self.margin)
+        if direction < 0:
+            self.ang = -self.ang
+        # print("compass: ", compass, "avg: ", self.average, "ang: ", self.ang)
+
+        # cumulative avg - filtering samples
+        # self.ang = (self.ang + filtered) / 2
+        # print("compass: ", compass, "filtered: ", filtered, "ang: ", self.ang)
 
 
 # Identifier
@@ -424,6 +466,7 @@ class MyRob(CRobLinkAngs):
         self.openNodes = []
         self.filename = 'mapping.out'
         self.charMap = [[' ' for cols in range(MAP_COLS)] for rows in range(MAP_ROWS)]
+        self.targets = []
         # motors
         self.lPow = 0
         self.rPow = 0
@@ -439,6 +482,10 @@ class MyRob(CRobLinkAngs):
         self.ang = 0
         # init target
         self.target = (self.x, self.y)
+        self.source = self.target
+        self.dtarget = dist(self.target, self.source)
+        robot = (self.roundX, self.roundY)
+        self.drobot = dist(robot, self.source)
 
 
     # In this map the center of cell (i,j), (i in 0..6, j in 0..13) is mapped to labMap[i*2][j*2].
@@ -463,13 +510,17 @@ class MyRob(CRobLinkAngs):
         # init orientation
         self.orientation = dir.fromAngle(self.ang)
         self.turn = self.orientation
+        self.filteredCompass = CompassFilter(self.measures.compass)
         # init PID controllers      
         self.positionController = PIDController(PKP, PKI, PKD)
+        self.orientationController = PIDController(OKP, OKI, OKD)
         self.compassController = PIDController(CKP, CKI, CKD)
         self.lineController = PIDController(LKP, LKI, LKD)
         # update gps
         self.gps = GPSFilter(self.measures.x, self.measures.y)    # DEBUG only
         self.gps.update(self.measures.x, self.measures.y)         # DEBUG only
+        # init targets array
+        self.targets = [None for i in range(int(self.nBeacons))]
 
         while True:
             self.readSensors()
@@ -603,6 +654,8 @@ class MyRob(CRobLinkAngs):
             # save initial intersection to the map
             inter = (int(self.x), int(self.y))
             self.map[inter] = Intersection(inter, self.globalDirs)
+            # save initial target
+            self.targets[self.measures.ground] = self.map[inter]
 
             # init char map
             i, j = MAP_CENTER
@@ -634,7 +687,7 @@ class MyRob(CRobLinkAngs):
             self.first = True
         elif self.state == "scan":
             # count transition condition
-            if self.Dx == 0 and self.Dy == 0:
+            if self.distError <= 0:
                 self.transition = self.transition + 1
             else:
                 self.transition = 0
@@ -654,7 +707,7 @@ class MyRob(CRobLinkAngs):
                 self.transition = 0
             
             # let transition condition stabilize
-            stable = 4
+            stable = 3
             if self.transition == stable:
                 # debug
                 # print("Found Left: ", self.identifier.foundLeft)
@@ -682,6 +735,10 @@ class MyRob(CRobLinkAngs):
                 # save new intersection to the search map
                 if not (inter in self.map):
                     self.map[inter] = Intersection(inter, self.globalDirs)
+                    # check if intersection is a beacon
+                    if self.measures.ground != -1:
+                        print("Target", self.measures.ground, "at", inter)
+                        self.targets[self.measures.ground] = self.map[inter]
 
                     # expand nodes
                     newNodes = []
@@ -705,19 +762,19 @@ class MyRob(CRobLinkAngs):
 
                     self.openNodes[:0] = newNodes
             
-                # print("Open Nodes:", self.openNodes)
 
                 # decide which turn to take
                 inter, path = self.openNodes.pop(0)
                 self.turn = dir.fromAngle(dir.fromGlobal(self.orientation, dir.fromAngle(path.dir)))
 
+                print("Open Nodes:", self.openNodes)
                 # print("Orientation: ", dir.directions[self.orientation])
                 # print("Dirs: ", list(map(lambda rel: dir.directions[rel], self.relDirs)))
                 # print("Node: ", (inter, path))
                 # print("Turn: ", dir.directions[self.turn])
                 
                 # show map
-                print(self.map)
+                # print(self.map)
                 for row in self.charMap:
                     print(''.join(row))
 
@@ -739,7 +796,7 @@ class MyRob(CRobLinkAngs):
                 self.transition = 0
             
             # let transition condition stabilize
-            stable = 3
+            stable = 2
             if self.transition == stable:
                 # init go variables
                 ang = round(self.ang)
@@ -747,6 +804,8 @@ class MyRob(CRobLinkAngs):
                 self.turn = 0
                 
                 self.target = self.getTarget(self.orientation)
+                self.source = (self.roundX, self.roundY)
+                self.dtarget = dist(self.target, self.source)
 
                 # print("Next Target: ", self.target)
 
@@ -774,14 +833,12 @@ class MyRob(CRobLinkAngs):
         self.lineSensorFilteredRead = self.measures.lineSensor  # as str
         self.lineSensorFilteredReadNum = list(map(int, self.lineSensorFilteredRead))   # as int
         # TODO: compass filter
-        # Get the compass read
-        self.compassRead = self.measures.compass
-        # Send it to the filter
-        # self.compassReadFiltered = self.compassFilter.update(self.compassRead)
         # Get the filtered compass read
-        # self.ang = self.compassRead
+        self.filteredCompass.update(self.measures.compass)
+        self.ang = self.filteredCompass.ang
         # update gps
         self.gps.update(self.measures.x, self.measures.y)     # DEBUG only
+
 
         # Calc distance to target
         nextX, nextY = self.target
@@ -791,6 +848,9 @@ class MyRob(CRobLinkAngs):
         # update dx, dy
         self.Dx = nextX - self.roundX
         self.Dy = nextY - self.roundY
+        robot = (self.roundX, self.roundY)
+        self.drobot = dist(robot, self.source)
+        self.distError = self.dtarget - self.drobot
 
         # calc distance error
         absDx, absDy = abs(self.Dx), abs(self.Dy)
@@ -821,27 +881,28 @@ class MyRob(CRobLinkAngs):
         
         # Get the PID control
         pidSpeed = self.positionController.getPID(self.posError)
-        pidCompass = self.compassController.getPID(self.angError)
+        pidOrient = self.orientationController.getPID(self.angError)
+        # pidCompass = pidSpeed * self.compassController.getPID(self.angError)
         pidLine = self.lineController.getPID(self.lineError)
 
         if dAng < 0:
-            pidCompass = - pidCompass
+            pidOrient = - pidOrient
 
         if self.state=="init" or self.state == "scan" or self.state == "ident":
             self.identifier.push(self.lineSensorFilteredRead)
         if self.state == "ident":
             baseSpeed = 0.01
             # Compute the powers of the motors
-            lPow = round((baseSpeed + pidSpeed) - pidCompass, 2)
-            rPow = round((baseSpeed + pidSpeed) + pidCompass, 2)
+            lPow = round((baseSpeed + pidSpeed) - pidOrient, 2)
+            rPow = round((baseSpeed + pidSpeed) + pidOrient, 2)
         elif self.state == "go":
             # Compute the powers of the motors
             lPow = round(pidSpeed - pidLine, 2)
             rPow = round(pidSpeed + pidLine, 2)
         else:
             # Compute the powers of the motors
-            lPow = round(pidSpeed - pidCompass, 2)
-            rPow = round(pidSpeed + pidCompass, 2)
+            lPow = round(pidSpeed - pidOrient, 2)
+            rPow = round(pidSpeed + pidOrient, 2)
 
         # normalize powers
         if lPow > 0.15:
@@ -858,15 +919,23 @@ class MyRob(CRobLinkAngs):
         self.rPow = rPow
 
         # debug
+        # coloredLineSensorFiltered = bcolors.color(self.lineSensorFilteredRead)
+        # print(
+        #     '{} {:4s} lineError: {:4.2f} coord: {:4.2f} {:4.2f} gps: {:4.2f} {:4.2f} target: {:4.2f} {:4.2f} dX: {:4.2f} dY: {:4.2f} posError: {:5.2f} distError: {:5.2f} orient: {:3d} turn: {:3d} ang: {:3d} compass: {:4.2f} angError: {:4d} motors: {:5.2f} {:5.2f}'
+        #         .format(
+        #             coloredLineSensorFiltered, self.state.upper(), self.lineError,
+        #             self.roundX, self.roundY, self.gps.x, self.gps.y, self.target[0], self.target[1],
+        #             self.Dx, self.Dy, self.posError, self.distError,
+        #             dir.directions[self.orientation], dir.directions[self.turn], ang, self.measures.compass, self.angError,
+        #             self.lPow, self.rPow
+        #         )
+        # )
         coloredLineSensorFiltered = bcolors.color(self.lineSensorFilteredRead)
         print(
-            '{} {:4s} coord: {:4.2f} {:4.2f} gps: {:4.2f} {:4.2f} orient: {:4d} turn: {:4d} ang: {:4d} angError: {:4d} target: {:4.2f} {:4.2f} dX: {:4.2f} dY: {:4.2f} posError: {:5.2f} p: {:5.2f} i: {:5.2f} motors: {:5.2f} {:5.2f}'
+            '{} {:4s} lineError: {:4.2f} orient: {:3d} turn: {:3d} ang: {:3d} compass: {:4.2f} angError: {:4d} motors: {:5.2f} {:5.2f}'
                 .format(
-                    coloredLineSensorFiltered, self.state.upper(),
-                    self.roundX, self.roundY, self.gps.x, self.gps.y,
-                    dir.directions[self.orientation], dir.directions[self.turn], ang, self.angError,
-                    self.target[0], self.target[1],
-                    self.Dx, self.Dy, self.posError, self.positionController.p, self.positionController.i,
+                    coloredLineSensorFiltered, self.state.upper(), self.lineError,
+                    dir.directions[self.orientation], dir.directions[self.turn], ang, self.filteredCompass.ang, self.angError,
                     self.lPow, self.rPow
                 )
         )
