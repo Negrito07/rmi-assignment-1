@@ -48,5 +48,11 @@ case $challenge in
         # python3 mainC1.py -h "$host" -p "$pos" -r "$robname"
         # mv your_pathfile $outfile.path           # if needed
         ;;
+    4)
+        # how to call agent for challenge 4
+        python3 c4Rob.py -h "$host" -p "$pos" -r "$robname"
+        mv mapping.out $outfile.map            # if needed
+        # mv path.out $outfile.path              # if needed
+        ;;
 esac
 
